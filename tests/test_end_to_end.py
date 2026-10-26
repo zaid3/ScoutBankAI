@@ -60,6 +60,11 @@ def certificates(tmp_path):
     ca = (x509.CertificateBuilder().subject_name(ca_name).issuer_name(ca_name).public_key(ca_key.public_key())
           .serial_number(x509.random_serial_number()).not_valid_before(now - timedelta(minutes=1))
           .not_valid_after(now + timedelta(days=1)).add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
+          .add_extension(x509.SubjectKeyIdentifier.from_public_key(ca_key.public_key()), critical=False)
+          .add_extension(x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_key.public_key()), critical=False)
+          .add_extension(x509.KeyUsage(digital_signature=True, content_commitment=False, key_encipherment=False,
+                                      data_encipherment=False, key_agreement=False, key_cert_sign=True,
+                                      crl_sign=True, encipher_only=False, decipher_only=False), critical=True)
           .sign(ca_key, hashes.SHA256()))
     ca_path = tmp_path / "ca.crt"
     ca_path.write_bytes(ca.public_bytes(serialization.Encoding.PEM))
@@ -69,6 +74,12 @@ def certificates(tmp_path):
         builder = (x509.CertificateBuilder().subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, name)]))
                    .issuer_name(ca_name).public_key(key.public_key()).serial_number(x509.random_serial_number())
                    .not_valid_before(now - timedelta(minutes=1)).not_valid_after(now + timedelta(days=1))
+                   .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+                   .add_extension(x509.SubjectKeyIdentifier.from_public_key(key.public_key()), critical=False)
+                   .add_extension(x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_key.public_key()), critical=False)
+                   .add_extension(x509.KeyUsage(digital_signature=True, content_commitment=False, key_encipherment=True,
+                                               data_encipherment=False, key_agreement=False, key_cert_sign=False,
+                                               crl_sign=False, encipher_only=False, decipher_only=False), critical=True)
                    .add_extension(x509.ExtendedKeyUsage([usage]), critical=False))
         if name == "server":
             builder = builder.add_extension(x509.SubjectAlternativeName([x509.IPAddress(ipaddress.ip_address("127.0.0.1"))]), critical=False)
@@ -82,7 +93,14 @@ def certificates(tmp_path):
     return paths
 
 
-def test_signed_consent_sdk_and_worker_over_real_https_with_mtls(tmp_path, certificates):
+def test_signed_consent_sdk_and_worker_over_real_https_with_mtls(tmp_path, certificates, monkeypatch):
+    original_context = ssl.create_default_context
+    def strict_context(*args, **kwargs):
+        context = original_context(*args, **kwargs)
+        context.verify_flags |= ssl.VERIFY_X509_STRICT
+        return context
+    # Exercise strict validation on every supported Python version, including pre-3.13.
+    monkeypatch.setattr(ssl, "create_default_context", strict_context)
     pki = certificates
     bank_token = tmp_path / "bank-token.key"
     bank_token.write_text(secrets.token_urlsafe(48))
