@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "scoutbankai"
+version = "0.1.0rc1"
+description = "Agent identity, delegated permissions and payment controls for existing bank APIs"
+requires-python = ">=3.11"
+authors = [{name = "A Haque (zaid)"}]
+maintainers = [{name = "A Haque (zaid)"}]
+readme = "README.md"
+license = "Apache-2.0"
+dependencies = ["fastapi==0.162.0", "uvicorn==0.54.0", "httpx==0.28.1", "PyJWT==2.15.1", "cryptography==50.0.2", "pydantic==2.14.1"]
+
+[project.optional-dependencies]
+test = ["pytest==9.1.1"]
+
+[project.scripts]
+scoutbankai = "scoutbankai.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/zaid3/ScoutBankAI"
+Repository = "https://github.com/zaid3/ScoutBankAI"
+Issues = "https://github.com/zaid3/ScoutBankAI/issues"
+
+[tool.setuptools.packages.find]
+include = ["scoutbankai*"]
+
+[tool.setuptools.package-data]
+scoutbankai = ["static/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+

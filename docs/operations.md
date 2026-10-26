@@ -1,0 +1,117 @@
+# Deployment and recovery
+
+ScoutBankAI runs as an API process and a bank worker on one trusted installation. SQLite must be on local durable storage. Do not deploy multiple hosts against a shared network filesystem or infer high availability from multiple API workers.
+
+## Configure an integrated installation
+
+Install the package in a dedicated Python environment and run commands as a dedicated operating-system account. The following generates only local audit and nonce keys. It does not create bank access credentials:
+
+```sh
+scoutbankai configure --directory /var/lib/scoutbankai \
+  --origin https://agents.your-bank.example \
+  --issuer https://identity.your-bank.example \
+  --bank-url https://gateway.your-bank.example/scout
+```
+
+Replace the example domains with the institution's actual approved endpoints. The command refuses a nonempty destination. Provision the required files through the institution's secret-management process:
+
+* `bank-jwks.json`: the bank issuer's public verification keys.
+* `bank-client.crt` and `bank-client.key`: the worker's accepted client certificate and private key.
+* `bank-token.key`: the bank gateway credential, containing only the token.
+
+The configuration resolves file paths relative to its own directory. Set owner-only permissions on private keys, credentials, state and backups. Integrated settings reject group/world-accessible secret files on POSIX systems. If the gateway uses a private CA, add `connector.ca_file` with that CA bundle. Server verification is always enabled.
+
+Run the local checks, enable an approved tenant and start the services:
+
+```sh
+scoutbankai check --config /var/lib/scoutbankai/config.json
+scoutbankai enable-tenant --config /var/lib/scoutbankai/config.json bank-one
+scoutbankai serve --config /var/lib/scoutbankai/config.json
+scoutbankai worker --config /var/lib/scoutbankai/config.json
+```
+
+Run the final two commands in separate supervised processes. `check` verifies configuration, issuer key material, connector credentials, local database integrity and the audit chain. It makes no bank request and is not a readiness certificate for a live deployment. `enable-tenant` is host administration; it must be restricted to authorised administrators.
+
+## HTTPS and network boundaries
+
+Put the API behind the bank's approved TLS reverse proxy. Preserve the configured `Host`, request path and security headers. Forward only to the loopback service; do not expose its HTTP port publicly. Use the same public origin in the SDK and configuration. Incoming origins are checked and cross-origin browser access is not enabled.
+
+The proxy must reject ambiguous headers, limit request sizes and enforce connection and per-client limits before forwarding. The application does not trust `X-Forwarded-For`, so its IP rate limit sees the proxy address. Size or tune the edge and application limits for the approved workload. The built-in limits are conservative, not a throughput guarantee.
+
+Restrict worker egress to the approved bank gateway. The optional model reviewer requires access to the configured provider's fixed API endpoint. TLS verification and redirects are not weakened to accommodate a failing connection.
+
+API and worker code are separate processes, but this release trusts the shared host and database boundary. It does not provide hardware-enforced separation between them. Protect the host and use managed secrets, encrypted storage, OS-level service supervision and restricted administrator access.
+
+## Service supervision
+
+Run the API and worker under the institution's service manager. Restart on failure, allow graceful termination and alert on repeated crashes. A basic systemd worker unit can use:
+
+```ini
+[Unit]
+Description=ScoutBankAI bank worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=scoutbankai
+Group=scoutbankai
+ExecStart=/opt/scoutbankai/.venv/bin/scoutbankai worker --config /var/lib/scoutbankai/config.json
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=30
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/scoutbankai
+
+[Install]
+WantedBy=multi-user.target
+```
+
+For the API, use a separate unit with the `serve` command and the same protected state directory. Provision service accounts, installation paths and TLS before enabling either unit. The unit is deployment guidance, not a claim that the repository has been installed on a production host.
+
+## Monitoring
+
+`/healthz` checks API availability and basic database access. It does not prove that the worker, bank gateway or settlement network is available. Monitor the worker process separately.
+
+Inspect payment state counts with `scoutbankai check`. Alert on growing `unknown`, `submitted`, `dispatching`, `screening` or `review` queues, old unresolved records, storage errors, failed checks and unexpected permission changes. Use the stored `created` and `updated` timestamps to implement institution-specific age thresholds. No alert destination is configured automatically.
+
+The console shows bounded snapshots, not all-time totals. Use controlled database reporting for institution-wide metrics. Application access logs are disabled by default to avoid token or payment disclosure. Configure reverse-proxy logs to exclude authentication headers and bodies. Keep clocks synchronised.
+
+## Pause and incident handling
+
+An operator can pause new requests and dispatches in the console. The worker continues status reconciliation. Revoke affected permissions or suspend a compromised agent. A pause or revocation cannot recall a request that has already crossed the dispatch boundary, and cannot reverse settled money.
+
+If a bank operation is `unknown`, investigate the bank's authoritative journal using the stored payment ID and request hash. Do not manually change it to `queued`, give it a fresh business-idempotency key, or release the reservation because a status endpoint is unavailable. The bank must establish whether a payment exists and provide a trustworthy terminal outcome. A 404 alone is not proof that no payment occurred.
+
+## Backups and independent checkpoints
+
+```sh
+scoutbankai audit --config /var/lib/scoutbankai/config.json --output checkpoint.json
+scoutbankai backup --config /var/lib/scoutbankai/config.json \
+  --directory /secure-backups/scoutbankai-2026-10-26 --anchor checkpoint.json
+```
+
+Choose a new backup directory for each run. The backup uses SQLite's online backup API to capture a consistent snapshot, checks database and audit integrity, and writes a manifest with a SHA-256 checksum and audit checkpoint. A backup without a completed manifest is incomplete. The command never replaces an existing directory.
+
+The backup contains sensitive institution data. Encrypt it, restrict access and apply the bank's retention policy. Store keys separately through the secret-management process: this command intentionally does not copy them. Keep the manifest and checkpoints in independent protected storage. A checksum detects accidental corruption; it does not authenticate a manifest that an attacker can also replace. An independently retained audit checkpoint detects truncation through that point.
+
+## Recovery from a snapshot
+
+Recovery requires a supervised reconciliation exercise; it is not an automatic rollback button.
+
+1. Stop dispatch and isolate the damaged installation. Preserve its database, WAL files and incident evidence.
+2. Restore the snapshot into a new private directory, with the correct audit key and configuration. Check the manifest checksum and audit chain before running any worker. Use the checkpoint that belongs to this snapshot.
+3. Keep API intake and dispatch stopped. Compare the bank journal, retained audit checkpoints and business requests across the **entire interval between the snapshot and the outage**. The old snapshot may be missing operations that actually settled.
+4. Reconcile every nonterminal record and any missing post-snapshot operation through the institution's authoritative process. A later external checkpoint will correctly fail against an older snapshot. Do not discard that discrepancy or re-submit lost work with new identities.
+5. Revoke stale grants and tokens through an institution-approved recovery procedure, obtain fresh customer authority where necessary, and resume only after the bank has accepted the reconciliation.
+
+This release does not provide automatic database merging, recovery-gap reconstruction or disaster-recovery orchestration. Restoring a snapshot alone does not preserve exactly-once business execution. The gateway must retain its idempotency journal for the bank's complete recovery horizon.
+
+## Upgrades and acceptance
+
+Back up first, test the new package and schema against a copy, and retain the previous installation. An unsupported database schema version is rejected. The current release uses schema version 1; no cross-version migration is required within this release.
+
+Before live use, validate the institution's issuer and consent channel, gateway mappings, certificate and key rotation, bank rejection and timeout semantics, retention, recovery, workload capacity, monitoring, incident response and selected model behaviour. Obtain independent security and operational review. Repository test results are evidence for that review, not a substitute for institution acceptance.

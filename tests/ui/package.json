@@ -1,0 +1,6 @@
+{
+  "name": "scoutbankai-ui-tests",
+  "private": true,
+  "scripts": {"test": "node console.cjs"},
+  "devDependencies": {"playwright": "1.62.1"}
+}

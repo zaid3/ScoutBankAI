@@ -1,0 +1,79 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs/promises');
+const os = require('node:os');
+const path = require('node:path');
+const net = require('node:net');
+const {spawn} = require('node:child_process');
+const {chromium} = require('playwright');
+
+(async () => {
+  const root = path.resolve(__dirname, '../..');
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'scoutbankai-ui-'));
+  const probe = net.createServer();
+  await new Promise(resolve => probe.listen(0, '127.0.0.1', resolve));
+  const port = probe.address().port;
+  await new Promise(resolve => probe.close(resolve));
+  const child = spawn(process.env.PYTHON || 'python', [path.join(__dirname, 'serve_fixture.py'), path.join(directory, 'state'), String(port)], {cwd: root, stdio: ['ignore', 'ignore', 'pipe']});
+  let stderr = '';
+  child.stderr.on('data', chunk => { stderr += chunk; });
+  let browser;
+  try {
+    const origin = `http://127.0.0.1:${port}`;
+    let ready = false;
+    for (let i = 0; i < 100; i++) {
+      try { if ((await fetch(origin + '/healthz')).ok) { ready = true; break; } } catch {}
+      if (child.exitCode !== null) throw new Error(stderr);
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    assert(ready, 'API did not become ready');
+    const credentials = JSON.parse(await fs.readFile(path.join(directory, 'state/credentials.json'), 'utf8'));
+    browser = await chromium.launch({headless: true,
+      ...(process.env.SCOUT_CHROMIUM_PATH ? {executablePath: process.env.SCOUT_CHROMIUM_PATH, args: ['--no-sandbox', '--disable-gpu']} : {})});
+    const page = await browser.newPage({viewport: {width: 1440, height: 1000}});
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    page.on('dialog', dialog => dialog.accept());
+    await page.goto(origin);
+    await page.getByLabel('Access token', {exact: true}).fill(credentials.operator);
+    await page.getByRole('button', {name: 'Connect', exact: true}).click();
+    await page.getByText('operator connected', {exact: true}).waitFor();
+    assert.equal(await page.locator('#review-count').innerText(), '1');
+    await page.getByRole('button', {name: 'Pause new dispatches', exact: true}).click();
+    await page.getByRole('button', {name: 'Resume new dispatches', exact: true}).waitFor();
+    await page.getByRole('button', {name: 'Resume new dispatches', exact: true}).click();
+    await page.getByRole('button', {name: 'Pause new dispatches', exact: true}).waitFor();
+    await page.getByRole('button', {name: 'Verify chain', exact: true}).click();
+    await page.getByText(/Audit chain verified through event/).waitFor();
+    assert.deepEqual(await page.evaluate(() => ({local: localStorage.length, session: sessionStorage.length})), {local: 0, session: 0});
+    const screenshots = process.env.SCOUT_SCREENSHOTS || path.join(root, '.ui-artifacts');
+    await fs.mkdir(screenshots, {recursive: true});
+    await page.screenshot({path: path.join(screenshots, 'console-desktop.png'), fullPage: true});
+    await page.setViewportSize({width: 390, height: 844});
+    assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'mobile layout overflows');
+    await page.screenshot({path: path.join(screenshots, 'console-mobile.png'), fullPage: true});
+    await page.getByRole('button', {name: 'Disconnect', exact: true}).click();
+    await page.getByLabel('Access token', {exact: true}).fill(credentials.reviewer);
+    await page.getByRole('button', {name: 'Connect', exact: true}).click();
+    await page.getByText('reviewer connected', {exact: true}).waitFor();
+    assert.equal(await page.getByRole('button', {name: 'Pause new dispatches', exact: true}).count(), 0);
+    await page.getByRole('button', {name: 'Approve this request', exact: true}).click();
+    await page.waitForFunction(() => document.querySelector('#review-count').textContent === '0');
+    await page.getByRole('button', {name: 'Disconnect', exact: true}).click();
+    await page.getByLabel('Access token', {exact: true}).fill(credentials.auditor);
+    await page.getByRole('button', {name: 'Connect', exact: true}).click();
+    await page.getByText('auditor connected', {exact: true}).waitFor();
+    assert.equal(await page.getByRole('button', {name: 'Suspend agent', exact: true}).count(), 0);
+    const download = page.waitForEvent('download');
+    await page.getByRole('button', {name: 'Export visible events', exact: true}).click();
+    const exported = await download;
+    const events = JSON.parse(await fs.readFile(await exported.path(), 'utf8'));
+    assert(events.events.some(event => event.action === 'review_approved'));
+    assert.deepEqual(errors, []);
+    console.log('Console checks passed: operator controls, reviewer approval, auditor export, in-memory token, desktop and mobile layout.');
+  } finally {
+    if (browser) await browser.close();
+    const stopped = new Promise(resolve => child.once('exit', resolve));
+    if (child.exitCode === null) { child.kill('SIGTERM'); await stopped; }
+    await fs.rm(directory, {recursive: true, force: true});
+  }
+})().catch(error => { console.error(error); process.exitCode = 1; });
