@@ -20,7 +20,7 @@ Set `mode` to `integrated`. This disables development bearer tokens. Configure a
 
 Access tokens need `iss`, `aud`, `sub`, `tenant`, `role`, `iat` and `exp`. Maximum lifetime is 900 seconds. `sub` and `tenant` are opaque identifiers using letters, numbers, underscores or hyphens. Enable each tenant through the host administration command before accepting its tokens:
 
-Operator and reviewer tokens must additionally contain `"scout_actor_type": "human"`. The bank issuer must reserve this assertion for its protected staff authentication flow. A service token, missing assertion or unsupported actor type is rejected for these roles. This is a verified issuer assertion, not biometric detection or proof that credentials were never shared.
+Operator, reviewer and evaluator tokens must additionally contain `"scout_actor_type": "human"`. The bank issuer must reserve this assertion for its protected staff authentication flow. A service token, missing assertion or unsupported actor type is rejected for these roles. This is a verified issuer assertion, not biometric detection or proof that credentials were never shared.
 
 ```sh
 scoutbankai enable-tenant --config /run/scout/config.json bank-one
@@ -33,6 +33,7 @@ The bank should map an existing staff identity to exactly one role per token:
 | `operator` | Register agents, account aliases and payees; pause; freeze; propose control changes; suspend; revoke; inspect evidence |
 | `reviewer` | Approve or reject payments and control changes independently |
 | `auditor` | Read the console and verify evidence |
+| `evaluator` | Read the console and label completed cross-audits against independent evidence; cannot approve payments or change controls |
 | `customer` | Grant a permission with an exact consent receipt; issue tokens for an existing permission; revoke own permissions |
 
 The agent uses a separate opaque DPoP token. No staff or customer bearer token can call the agent payment interface as an agent.

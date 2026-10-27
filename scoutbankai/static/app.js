@@ -1,5 +1,5 @@
 "use strict";
-let token = "", snapshot = null, sessionGeneration = 0;
+let token = "", snapshot = null, sessionGeneration = 0, selectedAudit = null, auditSelection = 0;
 const $ = id => document.getElementById(id);
 const readable = value => String(value || "").replaceAll("_", " ");
 const date = value => new Date(value * 1000).toLocaleString();
@@ -124,8 +124,105 @@ function renderControls(data) {
     changes.append(card);
   }
 }
-async function refresh() { const generation = sessionGeneration; const data = await api("/v1/overview"); if (generation !== sessionGeneration || !token) return; const controls = await api("/v1/controls"); if (generation !== sessionGeneration || !token) return; render(data); renderControls(controls); }
-function disconnect() { sessionGeneration++; token = ""; snapshot = null; $("token").value = ""; $("workspace").hidden = true; $("login").hidden = false; $("connection").textContent = "Disconnected"; $("connection").className = "connection"; $("limits-form").reset(); $("limit-feedback").textContent = ""; for (const id of ["payment-list", "agent-list", "mandate-list", "audit-list", "account-controls", "control-changes", "limit-account"]) $(id).replaceChildren(); }
+const findingLabels = {
+  threshold_exceeded: "Amount exceeds the review threshold", account_review_required: "Account policy requires review",
+  supervisor_review_required: "The supervisor requires review", budget_near_limit: "Delegated budget is near its limit",
+  high_velocity: "Request frequency needs review", unusual_pattern: "Unusual pattern supported by evidence",
+  insufficient_context: "Insufficient context for a decision", peer_disagreement: "Peer claims are disputed or uncertain"
+};
+function renderCouncil(data) {
+  $("council-mode").textContent = data.mode === "rules" ? "Deterministic rules" : "AI model audits";
+  $("council-description").textContent = data.rounds + " rounds · 3 audit roles · " +
+    (data.mode === "rules" ? "Local checks; no model calls." : data.distinct_models + " configured model IDs. Separate roles can share the same model and its mistakes.");
+  const scores = $("audit-scores"); scores.replaceChildren();
+  for (const score of data.scores) {
+    const card = node("article", undefined, "audit-score");
+    card.append(node("h3", readable(score.role)), node("strong", score.evaluated ? score.points + " points" : "Not yet scored"),
+      node("p", score.evaluated + " independently assessed requests", "detail"),
+      node("p", score.evaluated ? "Average: " + score.average_points.toFixed(1) + " / request · range −10 to +10" : "An independent evaluator must label the evidence first.", "detail"),
+      node("p", data.configured_models[score.role] || "rules-v1", "detail"));
+    scores.append(card);
+  }
+  const runs = $("audit-runs"); runs.replaceChildren();
+  if (!data.runs.length) runs.append(node("p", "No cross-audits recorded yet.", "empty"));
+  for (const run of data.runs) {
+    const card = node("article", undefined, "identity-card");
+    card.append(node("h4", run.payment), node("p", readable(run.status) + " · " + readable(run.reason) + " · " + run.rounds + " planned rounds", "detail"),
+      action("View audit rounds", () => openAudit(run.payment)));
+    runs.append(card);
+  }
+}
+async function openAudit(payment, focus = true) {
+  const generation = sessionGeneration, selection = ++auditSelection;
+  const data = await api("/v1/payments/" + payment + "/audits");
+  if (generation !== sessionGeneration || selection !== auditSelection || !token) return;
+  selectedAudit = data;
+  $("audit-detail").hidden = false; $("audit-detail-title").textContent = "Cross-audit · " + data.payment_id;
+  const summary = $("audit-detail-summary"); summary.replaceChildren();
+  summary.append(node("p", readable(data.status) + " · " + readable(data.reason), "detail"),
+    node("p", "Request hash: " + data.request_hash, "detail"), node("p", "Context hash: " + data.context_hash, "detail"),
+    node("p", "Result hash: " + (data.result_hash || "Not completed"), "detail"));
+  const context = node("details"); context.append(node("summary", "Original audit context"));
+  for (const [key, value] of Object.entries(data.context)) context.append(node("p", readable(key) + ": " + value, "detail"));
+  summary.append(context);
+  const rounds = $("audit-rounds"); rounds.replaceChildren();
+  for (let number = 1; number <= data.rounds; number++) {
+    const group = node("details", undefined, "audit-round"); group.open = number === data.rounds;
+    const reports = data.reports.filter(r => r.round === number);
+    group.append(node("summary", "Round " + number + (number === 1 ? " · independent assessments" : " · peer checks")));
+    if (!reports.length) group.append(node("p", "This round has no recorded reports.", "detail"));
+    for (const entry of reports) {
+      const card = node("article", undefined, "audit-report");
+      card.append(node("h4", readable(entry.role) + " · " + readable(entry.status)), node("p", "Model: " + entry.model, "detail"));
+      if (entry.report) {
+        card.append(node("p", entry.report.require_review ? "Requires independent review" : "No review trigger reported", "status " + (entry.report.require_review ? "review" : "settled")),
+          node("p", entry.report.summary, "detail"));
+        for (const code of entry.report.finding_codes) card.append(node("p", findingLabels[code], "detail"));
+        for (const peer of entry.report.peer_checks) card.append(node("p", "Checked " + peer.role + ": " + readable(peer.verdict) + " · " + peer.report_hash, "detail"));
+      } else card.append(node("p", "No usable report. This request requires independent review.", "detail"));
+      card.append(node("p", "Report hash: " + entry.report_hash, "detail")); group.append(card);
+    }
+    rounds.append(group);
+  }
+  const evaluation = $("audit-evaluation"); evaluation.replaceChildren();
+  $("evaluation-form").reset(); $("evaluation-feedback").textContent = "";
+  $("evaluation-form").hidden = snapshot.role !== "evaluator" || data.status !== "completed" || !!data.feedback;
+  if (data.feedback) {
+    const label = data.feedback.label;
+    evaluation.append(node("h4", "Independent assessment recorded"),
+      node("p", data.feedback.evaluator + " · " + date(data.feedback.created), "detail"),
+      node("p", "Evidence: " + label.evidence_reference, "detail"), node("p", label.explanation, "detail"),
+      node("p", label.review_required ? "Confirmed: review was required." : "Confirmed: no review trigger was established.", "detail"));
+    for (const code of label.confirmed_findings) evaluation.append(node("p", findingLabels[code], "detail"));
+  } else evaluation.append(node("p", "Not independently scored. A separate evaluator can assess a completed audit.", "detail"));
+  if (focus) $("audit-detail-title").focus();
+}
+for (const [code, label] of Object.entries(findingLabels)) {
+  const wrapper = node("label", undefined, "checkbox-label"), input = node("input");
+  input.type = "checkbox"; input.value = code; input.name = "confirmed-finding";
+  wrapper.append(input, document.createTextNode(label)); $("evaluation-findings").append(wrapper);
+}
+$("evaluation-form").addEventListener("submit", event => {
+  event.preventDefault();
+  const selected = selectedAudit, generation = sessionGeneration;
+  if (!selected || snapshot.role !== "evaluator") return;
+  const findings = [...$("evaluation-findings").querySelectorAll("input:checked")].map(input => input.value);
+  const required = $("evaluation-verdict").value === "yes";
+  if (required !== !!findings.length) {
+    $("evaluation-feedback").textContent = "Confirm at least one finding when review was required, or clear all findings when no trigger was established.";
+    $("evaluation-feedback").focus(); return;
+  }
+  busy(event.submitter, async () => {
+    await api("/v1/payments/" + selected.payment_id + "/audit-feedback", {
+      result_hash: selected.result_hash, review_required: required, confirmed_findings: findings,
+      evidence_reference: $("evaluation-reference").value.trim(), explanation: $("evaluation-explanation").value.trim()
+    });
+    if (generation !== sessionGeneration || !token) return;
+    await refresh(); await openAudit(selected.payment_id, false); message("Independent assessment recorded. Points updated; payment authority is unchanged.");
+  });
+});
+async function refresh() { const generation = sessionGeneration; const data = await api("/v1/overview"); if (generation !== sessionGeneration || !token) return; const controls = await api("/v1/controls"); if (generation !== sessionGeneration || !token) return; const council = await api("/v1/audit-agents"); if (generation !== sessionGeneration || !token) return; render(data); renderControls(controls); renderCouncil(council); }
+function disconnect() { sessionGeneration++; auditSelection++; token = ""; snapshot = null; selectedAudit = null; $("token").value = ""; $("workspace").hidden = true; $("login").hidden = false; $("connection").textContent = "Disconnected"; $("connection").className = "connection"; $("limits-form").reset(); $("limit-feedback").textContent = ""; $("evaluation-form").reset(); $("evaluation-feedback").textContent = ""; $("audit-detail").hidden = true; for (const id of ["payment-list", "agent-list", "mandate-list", "audit-list", "account-controls", "control-changes", "limit-account", "audit-scores", "audit-runs", "audit-detail-summary", "audit-rounds", "audit-evaluation"]) $(id).replaceChildren(); }
 $("connect-form").addEventListener("submit", event => { event.preventDefault(); sessionGeneration++; token = $("token").value.trim(); $("token").value = ""; busy(event.submitter, async () => { await refresh(); message(""); }); });
 $("refresh").addEventListener("click", event => busy(event.currentTarget, refresh));
 $("disconnect").addEventListener("click", () => { disconnect(); message(""); });

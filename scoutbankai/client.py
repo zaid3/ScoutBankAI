@@ -9,14 +9,14 @@ from .crypto import canonical, proof
 
 
 class ScoutClient:
-    def __init__(self, origin, access_token, private_key, *, ca_file=None, transport=None):
+    def __init__(self, origin, access_token, private_key, *, ca_file=None, transport=None, timeout=120):
         url = urlsplit(origin)
         if url.path or url.query or url.fragment or url.username or not url.hostname:
             raise ValueError("origin must not contain a path, query or credentials")
         if url.scheme != "https" and not (url.scheme == "http" and url.hostname in {"127.0.0.1", "localhost", "testserver"}):
             raise ValueError("HTTPS required outside loopback")
         self.origin, self.token, self.key = origin, access_token, private_key
-        self.http = httpx.Client(timeout=30, follow_redirects=False, trust_env=False,
+        self.http = httpx.Client(timeout=httpx.Timeout(timeout, connect=5), follow_redirects=False, trust_env=False,
                                  verify=ssl.create_default_context(cafile=ca_file), transport=transport)
 
     def _call(self, method, path, body=b"", idempotency_key=""):

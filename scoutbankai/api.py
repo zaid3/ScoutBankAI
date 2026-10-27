@@ -16,6 +16,7 @@ from .crypto import digest, strict_json
 from .errors import BridgeError
 from .models import AccountRegistration, AgentRegistration, ControlProposal, MandateRequest, PauseRequest, PayeeRegistration, PaymentRequest, ReviewRequest
 from .journal import verify_financial_state
+from .audit_models import AuditFeedback
 from .service import Service
 
 
@@ -134,7 +135,7 @@ def create_app(settings, service=None):
 
     @app.get("/v1/overview")
     def overview(request: Request):
-        actor = principal(request, {"operator", "reviewer", "auditor"})
+        actor = principal(request, {"operator", "reviewer", "auditor", "evaluator"})
         return {"role": actor.role, **service.overview(actor)}
 
     @app.post("/v1/agents", status_code=201)
@@ -195,7 +196,7 @@ def create_app(settings, service=None):
 
     @app.get("/v1/controls")
     def controls(request: Request):
-        return service.controls.overview(principal(request, {"operator", "reviewer", "auditor"}))
+        return service.controls.overview(principal(request, {"operator", "reviewer", "auditor", "evaluator"}))
 
     @app.post("/v1/control-changes", status_code=201)
     def propose_change(request: Request, model: ControlProposal):
@@ -214,6 +215,18 @@ def create_app(settings, service=None):
         actor = principal(request, {"operator", "auditor"})
         with service.store.transaction() as db:
             return verify_financial_state(db, actor.tenant)
+
+    @app.get("/v1/audit-agents")
+    def audit_agents(request: Request):
+        return service.council.overview(principal(request, {"operator", "reviewer", "auditor", "evaluator"}))
+
+    @app.get("/v1/payments/{payment_id}/audits")
+    def payment_audits(payment_id: str, request: Request):
+        return service.council.detail(principal(request, {"operator", "reviewer", "auditor", "evaluator"}), payment_id)
+
+    @app.post("/v1/payments/{payment_id}/audit-feedback", status_code=201)
+    def audit_feedback(payment_id: str, request: Request, model: AuditFeedback):
+        return service.council.evaluate(principal(request, {"evaluator"}), payment_id, model)
 
     def openapi():
         if app.openapi_schema:

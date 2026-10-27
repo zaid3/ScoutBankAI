@@ -17,20 +17,23 @@ Use `Authorization: Bearer <bank-issued token>` in integrated mode. Development 
 | `POST /v1/agents/{id}/suspend` | operator | Suspend an agent and cancel undispatched work |
 | `POST /v1/pause` | operator | Pause immediately; direct resume is development-only |
 | `POST /v1/payments/{id}/review` | independent reviewer | Submit `decision` and the exact `request_hash` |
-| `GET /v1/overview` | operator, reviewer or auditor | Read the bounded tenant snapshot |
+| `GET /v1/overview` | operator, reviewer, auditor or evaluator | Read the bounded tenant snapshot |
 | `GET /v1/audit/verify` | operator or auditor | Verify the installation audit chain and return its latest checkpoint |
 | `GET /v1/openapi.json` | operator or auditor | Read the generated OpenAPI schema |
-| `GET /v1/controls` | operator, reviewer or auditor | Read up to 200 account policies and 100 control changes |
+| `GET /v1/controls` | operator, reviewer, auditor or evaluator | Read up to 200 account policies and 100 control changes |
 | `POST /v1/control-changes` | operator | Propose account limits, account reopening or bank resume |
 | `POST /v1/control-changes/{id}/review` | independent reviewer | Approve or reject the exact proposal hash |
 | `POST /v1/accounts/{id}/freeze` | operator | Freeze the account immediately and cancel undispatched work |
 | `GET /v1/journal/verify` | operator or auditor | Check tenant reservation entries, payment hashes and remaining grant budgets |
+| `GET /v1/audit-agents` | operator, reviewer, auditor or evaluator | Read the latest 100 cross-audits and labelled current-model scores |
+| `GET /v1/payments/{id}/audits` | operator, reviewer, auditor or evaluator | Read original context, all audit rounds and an existing assessment |
+| `POST /v1/payments/{id}/audit-feedback` | independent evaluator | Record an immutable evidence label and calculate points once |
 
 Required registration, permission and review fields are defined in [models.py](../scoutbankai/models.py). Amounts use integer minor units; GBP, EUR and USD are supported. An amount of `5000` means 50.00 of the selected currency. Floating-point money and arbitrary currencies are rejected.
 
 The mandate defines the account, agent, recipient allowlist, currency, permitted API actions, per-payment cap, total delegated budget, review threshold, expiry and maximum requests per minute. It lasts at most 30 days. The budget is a grant budget, not a daily reset or a substitute for bank funds checks.
 
-Integrated operator and reviewer tokens also need the issuer's `scout_actor_type: human` assertion. Account limits are a separate, mandatory integrated control spanning all grants. See [account security](account-security.md) for exact payloads, version conflicts, expiry and monetary semantics. Agent tokens have no access to these administrative endpoints.
+Integrated operator, reviewer and evaluator tokens also need the issuer's `scout_actor_type: human` assertion. Account limits are a separate, mandatory integrated control spanning all grants. See [account security](account-security.md) for exact payloads, version conflicts, expiry and monetary semantics. The [cross-audit guide](cross-audits.md) defines assessment fields, the scoring rubric and separation between evaluator and payment reviewer. Agent tokens have no access to these administrative endpoints.
 
 ## Agent API
 

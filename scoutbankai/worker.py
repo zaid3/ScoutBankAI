@@ -1,6 +1,7 @@
 from .connectors import BankResult
 from .errors import BridgeError
 from .journal import record, verify_payment
+from .council import verified_reports
 
 
 class Worker:
@@ -25,6 +26,13 @@ class Worker:
                 agent = db.execute("SELECT active FROM agents WHERE id=?", (row["agent"],)).fetchone()
                 if mandate["revoked"] or mandate["expires"] <= now or not agent[0]:
                     self.service.cancel(db, row, "authority_expired", "worker")
+                    continue
+                audit = db.execute("SELECT * FROM audit_runs WHERE payment=?", (row["id"],)).fetchone()
+                if audit:
+                    verified_reports(db, audit)
+                if (not audit or audit["status"] != "completed" or audit["require_review"]) and not row["reviewed_by"]:
+                    db.execute("UPDATE payments SET status='review',reason='cross_audit_required',updated=? WHERE id=?", (now, row["id"]))
+                    self.store.event(db, row["tenant"], "dispatch_cross_audit_required", "worker", now, payment_id=row["id"])
                     continue
                 try:
                     review = self.service.controls.check(db, row["tenant"], row["account"], row["amount"], dispatch=True, created=row["created"])
@@ -92,6 +100,7 @@ class Worker:
         # A crash during an advisory call must never turn silence into approval.
         with self.store.transaction() as db:
             for row in db.execute("SELECT * FROM payments WHERE status='screening' AND updated<?", (self.service.clock() - 60,)).fetchall():
+                self.service.council.interrupt(db, row["id"])
                 db.execute("UPDATE payments SET status='review',reason='supervision_interrupted',updated=? WHERE id=?", (self.service.clock(), row["id"]))
                 self.store.event(db, row["tenant"], "supervision_interrupted", "worker", self.service.clock(), payment_id=row["id"])
 

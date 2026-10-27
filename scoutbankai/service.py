@@ -13,6 +13,7 @@ from .supervisor import OpenAISupervisor, RuleSupervisor
 from .controls import Controls
 from .journal import record, verify_payment
 from .vault import Vault
+from .council import AuditCouncil, AuditOutcome
 
 PENDING = ("screening", "review", "queued")
 
@@ -28,6 +29,7 @@ class Service:
         cfg = settings.supervisor
         self.supervisor = supervisor or (OpenAISupervisor(cfg.get("model", ""), cfg.get("token_env", "OPENAI_API_KEY"))
                                          if cfg.get("mode") == "openai" else RuleSupervisor())
+        self.council = AuditCouncil(self)
 
     def register_agent(self, principal, model):
         key_hash = thumbprint(model.public_jwk)
@@ -189,6 +191,15 @@ class Service:
                 raise ValueError("invalid advice")
         except Exception:
             advice = Advisory(require_review=True, reason="provider_unavailable")
+        try:
+            cross_audit = self.council.assess(payment_id, {**context,
+                "account_requires_review": bool(account_review), "supervisor_requires_review": advice.require_review})
+            if not isinstance(cross_audit, AuditOutcome):
+                raise ValueError("invalid cross-audit result")
+        except Exception:
+            cross_audit = AuditOutcome(True, "cross_audit_unavailable")
+            with self.store.transaction() as db:
+                self.council.interrupt(db, payment_id)
         with self.store.transaction() as db:
             payment = db.execute("SELECT * FROM payments WHERE id=?", (payment_id,)).fetchone()
             if payment["status"] == "screening":
@@ -196,9 +207,11 @@ class Service:
                 if mandate["revoked"] or mandate["expires"] <= self.clock():
                     self.cancel(db, payment, "authority_expired", "supervisor")
                 else:
-                    review = account_review or advice.require_review or model.amount_minor > policy["review_above_minor"]
+                    review = account_review or advice.require_review or cross_audit.require_review or model.amount_minor > policy["review_above_minor"]
                     status = "review" if review else "queued"
                     reason = "account_review_required" if account_review else ("threshold_review" if model.amount_minor > policy["review_above_minor"] else advice.reason)
+                    if cross_audit.require_review and not (account_review or advice.require_review or model.amount_minor > policy["review_above_minor"]):
+                        reason = cross_audit.reason
                     db.execute("UPDATE payments SET status=?,reason=?,updated=? WHERE id=?", (status, reason, self.clock(), payment_id))
                     self.store.event(db, actor["tenant"], "supervision_completed", self.supervisor.name, self.clock(),
                                      payment_id=payment_id, status=status, reason=reason)
@@ -239,7 +252,11 @@ class Service:
             owner = db.execute("SELECT owner FROM agents WHERE id=?", (row["agent"],)).fetchone()[0]
             if principal.subject in {row["agent"], mandate["customer"], owner}:
                 raise BridgeError("independent_reviewer_required", 403)
+            evaluation = db.execute("SELECT evaluator FROM audit_feedback WHERE payment=?", (payment_id,)).fetchone()
+            if evaluation and evaluation[0] == principal.subject:
+                raise BridgeError("independent_reviewer_required", 403)
             if model.decision == "reject" or mandate["revoked"] or mandate["expires"] <= self.clock():
+                db.execute("UPDATE payments SET reviewed_by=? WHERE id=?", (principal.subject, payment_id))
                 self.cancel(db, row, "review_rejected" if model.decision == "reject" else "authority_expired", principal.subject)
             else:
                 db.execute("UPDATE payments SET status='queued',reason='review_approved',reviewed_by=?,updated=? WHERE id=?",

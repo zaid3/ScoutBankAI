@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from .audit_models import CouncilConfig
+
 
 @dataclass
 class Settings:
@@ -18,6 +20,7 @@ class Settings:
     vault_keyring_file: str = ""
     connector: dict = field(default_factory=dict)
     supervisor: dict = field(default_factory=lambda: {"mode": "rules"})
+    audit_council: dict = field(default_factory=lambda: {"mode": "rules", "rounds": 2})
 
     def validate(self):
         url = urlsplit(self.origin)
@@ -36,6 +39,7 @@ class Settings:
             raise ValueError("development mode only accepts a loopback origin")
         if self.supervisor.get("mode") not in {"rules", "openai"}:
             raise ValueError("unknown supervisor")
+        self.audit_council = CouncilConfig(**self.audit_council).model_dump()
         return self
 
     @classmethod

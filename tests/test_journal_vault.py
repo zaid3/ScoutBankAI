@@ -101,7 +101,7 @@ def test_schema_one_migration_preserves_existing_payment_and_budget(env):
     assert restarted.store.rows("SELECT * FROM payments") == before
     with restarted.store.transaction() as db:
         assert verify_financial_state(db)["payments_checked"] == 1
-    assert restarted.store.rows("PRAGMA user_version")[0]["user_version"] == 2
+    assert restarted.store.rows("PRAGMA user_version")[0]["user_version"] == 3
     assert any("reservation_journal_migrated" in r["event"] for r in restarted.store.rows("SELECT event FROM audit"))
     Service(env["settings"])
     assert len(restarted.store.rows("SELECT * FROM journal")) == 2

@@ -205,14 +205,16 @@ def test_stale_queued_request_expires_without_bank_dispatch(env):
 
 
 @pytest.mark.parametrize("actor_type", [None, "unknown", "service", {}, True, "missing"])
-def test_issuer_must_explicitly_attest_staff_human_identity(env, tmp_path, actor_type):
+@pytest.mark.parametrize("role", ["operator", "reviewer", "evaluator"])
+def test_issuer_must_explicitly_attest_staff_human_identity(env, tmp_path, actor_type, role):
     auth, key, claims = integrated_auth(env, tmp_path)
+    claims["role"] = role
     claims["scout_actor_type"] = actor_type
     if actor_type == "missing":
         claims.pop("scout_actor_type")
     token = jwt.encode(claims, key, algorithm="RS256", headers={"kid": "bank-key-1"})
     with pytest.raises(BridgeError, match="unauthenticated"):
-        auth.authenticate(token, {"operator"})
+        auth.authenticate(token, {role})
 
 
 def test_legacy_duplicate_aliases_cannot_activate_new_account_policy(env):

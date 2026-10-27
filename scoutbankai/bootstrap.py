@@ -31,7 +31,7 @@ def initialize(directory, origin="http://127.0.0.1:8090", tenant="sample-bank"):
     config = {"database": "scout.db", "audit_key_file": "audit.key", "nonce_key_file": "nonce.key",
               "origin": origin, "mode": "development", "vault_keyring_file": "vault-keys.json",
               "connector": {"base_url": "http://127.0.0.1:8091", "token_file": str(path / "bank-token.key")},
-              "supervisor": {"mode": "rules"}}
+              "supervisor": {"mode": "rules"}, "audit_council": {"mode": "rules", "rounds": 2}}
     private_write(path / "config.json", json.dumps(config, indent=2))
     private_write(path / "bank-token.key", secrets.token_urlsafe(48))
     settings = Settings.load(str(path / "config.json"))
@@ -39,7 +39,7 @@ def initialize(directory, origin="http://127.0.0.1:8090", tenant="sample-bank"):
     credentials = {}
     with service.store.transaction() as db:
         db.execute("INSERT INTO tenants(id) VALUES(?)", (tenant,))
-        for role in ("operator", "customer", "reviewer", "auditor"):
+        for role in ("operator", "customer", "reviewer", "auditor", "evaluator"):
             token = secrets.token_urlsafe(48)
             subject = role + "-sample"
             db.execute("INSERT INTO principals VALUES(?,?,?,?,?)", (digest(token), tenant, subject, role, service.clock() + 86400))

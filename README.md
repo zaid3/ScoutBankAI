@@ -8,7 +8,7 @@ Created and maintained by **A Haque (zaid)**. [GitHub profile](https://github.co
 
 ## Release status
 
-**0.2.0rc1 is an installable release candidate.** The API, agent client, operator console, durable payment state machine, consent checks, HTTP bank connector and optional model reviewer are implemented. This release adds shared account limits, independent approval of control changes, account isolation, an append-only reservation journal and encrypted bank identifiers. The verified suite contains 147 passing Python tests, including a real HTTPS and mutual TLS integration test. Browser checks cover control proposals, independent approvals, reservation verification, payment review, auditor export and desktop/mobile layout. See [verification results](docs/verification.md) for the exact scope.
+**0.3.0rc1 is an installable release candidate.** The API, agent client, operator console, durable payment state machine, consent checks, HTTP bank connector and optional model reviewers are implemented. This release adds repeated cross-audits by policy, evidence and challenge roles, retained peer checks and independently assessed quality points. Existing shared account limits, independent control approvals, account isolation, reservation journal and encrypted bank identifiers remain in place. The verified suite contains 205 passing Python tests, including real HTTPS and mutual TLS integration. Browser checks cover the audit rounds, evaluator permissions and points alongside the existing payment controls. See [verification results](docs/verification.md) for the exact scope.
 
 Live bank acceptance has not been completed. The included development bank uses simulated money. The integrated connector makes actual HTTPS requests to an operator-configured bank gateway; that gateway must implement the documented contract and connect to the institution's authorised systems. This release is not FAPI-certified, a regulated bank, a replacement core ledger, or a universal connector to every bank.
 
@@ -32,6 +32,8 @@ ScoutBankAI gives an agent a separate identity and a bounded permission. Its int
 | Reservation records drift from payment outcomes | A balanced append-only reservation journal, startup verification and dispatch checks | State corruption can be detected before a bank request is sent |
 | A timeout leaves the bank unsure whether a transfer succeeded | A durable payment record retains an unresolved state and uses authoritative status lookup | The worker avoids creating another transfer merely because a response was lost |
 | A model approves its own mistake | Hard controls run separately; sensitive requests need an independent reviewer identity | A model's output cannot expand authority or directly execute a payment |
+| Multiple agents repeat or hide the same mistake | Independent first assessments, two or three cross-check rounds and retained earlier concerns | Staff can inspect disagreements and incomplete reviews before approving the exact request |
+| An agent earns credit merely by agreeing with another agent | A separate human evaluator labels evidence; a fixed rubric scores final reports once | Performance can be compared without awarding financial authority or inventing accuracy claims |
 | A customer withdraws consent or an agent is compromised | Permission revocation, agent suspension and a bank pause control | Undispatched work can be stopped while existing bank operations are reconciled |
 | Staff cannot reconstruct why an action happened | Permission, request, review, dispatch and outcome are recorded in one event chain | Operations teams have evidence for investigation and reconciliation |
 
@@ -67,6 +69,8 @@ For banks, the intended value is a controlled route for authorised agents to use
 | Bank identifier encryption | AES-256-GCM with record-bound authentication, versioned keys and an explicit rotation command |
 | Independent review | A separate reviewer role approves the exact stored request hash; it cannot expand the permission |
 | AI supervision | Optional structured model assessment can require review; deterministic controls remain authoritative |
+| Repeated cross-audits | Three roles independently assess, then check both peers; any concern, disagreement or failed check requires human review |
+| Quality points | One independent evidence label per completed audit; bounded points for final reports, with no effect on execution authority |
 | Revocation | Customer permission revocation and operator agent suspension cancel undispatched work |
 | Emergency pause | Stops new requests and dispatches while status reconciliation continues |
 | Payment recovery | Durable dispatch boundary; uncertain results hold the reservation and are looked up without blind resubmission |
@@ -99,7 +103,7 @@ scoutbankai demo --directory .state
 scoutbankai serve --config .state/config.json
 ```
 
-Open `http://127.0.0.1:8090`. Use the `operator` token in the private `.state/credentials.json` file to connect the console. Use the separate `reviewer` token for review actions. These development tokens expire after 24 hours. They are not bank credentials.
+Open `http://127.0.0.1:8090`. Use the `operator` token in the private `.state/credentials.json` file to connect the console. Use the separate `reviewer` token for payment decisions and the `evaluator` token to assess audit quality. These development tokens expire after 24 hours. They are not bank credentials.
 
 The demo runs the real permission and payment logic against a deterministic test bank. It records an allowed request, a limit violation, a review request, a lost response followed by reconciliation, and revocation of undispatched work. The console displays those stored events. It does not invent live activity.
 
@@ -179,9 +183,17 @@ Provide the key privately to the API process. Each new permitted payment can mak
 
 An unavailable provider, refusal or malformed result requires independent review. The model cannot approve a policy violation, change the recipient or amount, grant consent, release a reservation or call the bank. [The supervision model](docs/architecture.md) explains the boundary. Provider responses are tested with controlled fixtures; a live model evaluation is still required for the selected model and intended use.
 
+## Agents that check each other's work
+
+The audit council has three roles: **policy**, **evidence** and **challenge**. Each starts with its own assessment. In the second round it checks the other two reports against the original evidence. A third round is configurable. Every report and exact peer reference is retained. Earlier concerns remain a reason for human review even if all roles later agree.
+
+Open **Audit agents** in the console to inspect the rounds and original context. A separate human evaluator can confirm the findings against an evidence reference. Correct findings earn points; unsupported claims, missed risks and unusable reports lose points. Only final-round reports are scored, once per payment. Points measure the labelled sample; they do not train models, change permissions or guarantee correctness.
+
+By default these roles run deterministic local checks, clearly labelled in the console. The optional AI mode uses the implemented OpenAI adapter and an explicitly configured model for each role. Two rounds make six model calls per new permitted payment; three rounds make nine, in addition to any primary model supervisor. Model mode requires an approved configuration and provider key. See [cross-audits and scoring](docs/cross-audits.md) for setup, the complete points rubric, evidence requirements, failure handling and limits.
+
 ## Operational boundaries
 
-The [banking security review](docs/banking-security-review.md) maps current reported risks and public bank architecture to implemented controls. The [account security guide](docs/account-security.md) explains the new API, role boundaries, monetary journal and key rotation. Existing installations must follow the [0.2 upgrade procedure](docs/operations.md#upgrading-from-01).
+The [banking security review](docs/banking-security-review.md) maps reported risks and public bank architecture to implemented controls. The [account security guide](docs/account-security.md) explains account limits, role boundaries, the reservation journal and key rotation. Existing installations must follow the [upgrade procedure](docs/operations.md#upgrades-and-acceptance).
 
 The database is a single-installation SQLite store with transactional writes. This release does not provide distributed high availability, automated disaster recovery or a guaranteed service level. Deploy the API and worker on the same trusted host/storage boundary. Do not share a SQLite database over a network filesystem.
 
@@ -201,6 +213,7 @@ A completed transfer is not automatically reversible. Revocation can stop undisp
 * [Verification results](docs/verification.md)
 * [Banking security research and coverage](docs/banking-security-review.md)
 * [Account controls, approvals and encryption](docs/account-security.md)
+* [Repeated cross-audits, model setup and quality points](docs/cross-audits.md)
 
 ## Licence
 

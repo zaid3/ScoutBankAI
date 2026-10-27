@@ -8,8 +8,9 @@ flowchart TD
     I["Bank issuer and customer approval"] --> G
     G --> D["Durable requests and reservations"]
     D --> S["Bounded supervisor"]
-    S --> R["Independent review when required"]
-    S --> W["Dispatch worker"]
+    S --> C["Repeated cross-audits"]
+    C --> R["Independent human review when required"]
+    C --> W["Dispatch worker"]
     R --> W
     W --> B["Existing bank gateway"]
     B --> W
@@ -18,7 +19,7 @@ flowchart TD
     W --> E
 ```
 
-The API controls identity, consent and the queue. The supervisor can request review but has no execution tool. The worker can submit a queued instruction only after rechecking active authority. The bank gateway applies the institution's existing checks and payment semantics. The operator console calls the same role-protected API as other approved applications.
+The API controls identity, consent and the queue. The supervisor and three audit roles can request review but have no execution tool. The worker can submit a queued instruction only after rechecking active authority, current controls, audit evidence and any required human approval. The bank gateway applies the institution's existing checks and payment semantics. The operator console calls the same role-protected API as other approved applications.
 
 The service is one logical installation with tenant-scoped application queries. It uses SQLite transactions for reservations and work claims. Multiple threads or local processes cannot claim the same queued operation or spend the same delegated budget twice. This is not a distributed database or active-active banking platform.
 
@@ -56,7 +57,9 @@ Expired or revoked authority is rechecked before dispatch. Expired agent access 
 
 Rule supervision always preserves the configured review threshold. The optional model reviewer sees bounded numeric context and can escalate. A separate deterministic validation step rejects policy violations before any model call. Model failure requires review. Approval binds to the stored request hash. The reviewer cannot alter the amount, recipient, account or currency.
 
-Independent roles reduce shared authority; they are not a claim that multiple AI models guarantee correctness. In this release the independent approver is a bank-issued reviewer identity, not a second model pretending to be a human reviewer. The bank must govern role assignment and prevent shared staff accounts.
+The council first records independent assessments, then two exact peer checks per role in each later round. It runs two rounds by default, with three as the maximum. Any finding, disagreement or failed report remains a requirement for human review even if later reports agree. Typed claims pass between roles; free-text summaries and score history do not. [Cross-audits](cross-audits.md) documents the full sequence and configuration.
+
+Independent roles reduce shared authority; they are not a claim that multiple AI models guarantee correctness. The payment approver remains a bank-issued human reviewer. A different evaluator can subsequently label completed audits against independent evidence. Labels award bounded points to final reports once; they do not alter payment state or reviewer authority. The bank must govern role assignment and prevent shared staff accounts.
 
 ## Evidence
 

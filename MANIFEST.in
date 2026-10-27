@@ -1,4 +1,5 @@
 include LICENSE NOTICE SECURITY.md CONTRIBUTING.md
 recursive-include docs *.md
 recursive-include tests *.py *.cjs *.json
+prune tests/ui/node_modules
 recursive-include .github *.yml CODEOWNERS

@@ -30,7 +30,7 @@ scoutbankai serve --config /var/lib/scoutbankai/config.json
 scoutbankai worker --config /var/lib/scoutbankai/config.json
 ```
 
-Run the final two commands in separate supervised processes. `check` verifies configuration, issuer key material, connector credentials, database integrity, the audit chain, the reservation journal and identifier decryption. It makes no bank request and is not a readiness certificate for a live deployment. `enable-tenant` is host administration; it must be restricted to authorised administrators. Register accounts and obtain independent approval of their shared policies before accepting payments in integrated mode.
+Run the final two commands in separate supervised processes. `check` verifies configuration, issuer key material, connector credentials, database integrity, the audit chain, cross-audit report bindings, the reservation journal and identifier decryption. It makes no bank or model request and is not a readiness certificate for a live deployment. `enable-tenant` is host administration; it must be restricted to authorised administrators. Register accounts and obtain independent approval of their shared policies before accepting payments in integrated mode.
 
 ## HTTPS and network boundaries
 
@@ -39,6 +39,8 @@ Put the API behind the bank's approved TLS reverse proxy. Preserve the configure
 The proxy must reject ambiguous headers, limit request sizes and enforce connection and per-client limits before forwarding. The application does not trust `X-Forwarded-For`, so its IP rate limit sees the proxy address. Size or tune the edge and application limits for the approved workload. The built-in limits are conservative, not a throughput guarantee.
 
 Restrict worker egress to the approved bank gateway. The optional model reviewer requires access to the configured provider's fixed API endpoint. TLS verification and redirects are not weakened to accommodate a failing connection.
+
+Cross-audits default to local rules. Configure the optional model council and bounded per-process concurrency using [cross-audits.md](cross-audits.md). Two rounds make six provider requests; three make nine. Audit calls run during payment submission, so align proxy and client timeouts with measured latency. The SDK defaults to a 120-second read timeout. A client timeout must use the original business-idempotency key on retry. Provider failures, capacity limits and stale screening are held for human review, not automatically resubmitted.
 
 API and worker code are separate processes, but this release trusts the shared host and database boundary. It does not provide hardware-enforced separation between them. Protect the host and use managed secrets, encrypted storage, OS-level service supervision and restricted administrator access.
 
@@ -78,6 +80,8 @@ For the API, use a separate unit with the `serve` command and the same protected
 
 Inspect payment state counts with `scoutbankai check`. Alert on growing `unknown`, `submitted`, `dispatching`, `screening` or `review` queues, old unresolved records, storage errors, failed checks and unexpected permission changes. Use the stored `created` and `updated` timestamps to implement institution-specific age thresholds. No alert destination is configured automatically.
 
+The check also returns cross-audit mode and state counts. Monitor capacity-limited/interrupted runs, invalid/unavailable reports, review disagreements, labelled sample counts, score distributions, model latency and provider costs. A score is based on supplied human labels, not an independently measured production accuracy rate. Keep payment reviewers and audit evaluators separate.
+
 The console shows bounded snapshots, not all-time totals. Use controlled database reporting for institution-wide metrics. Application access logs are disabled by default to avoid token or payment disclosure. Configure reverse-proxy logs to exclude authentication headers and bodies. Keep clocks synchronised.
 
 ## Pause and incident handling
@@ -114,14 +118,21 @@ This release does not provide automatic database merging, recovery-gap reconstru
 
 ## Upgrades and acceptance
 
-Back up first, test the new package and schema against a copy, and retain the previous installation. An unsupported database schema version is rejected. This release uses schema version 2.
+Back up first, test the new package and schema against a copy, and retain the previous installation. An unsupported database schema version is rejected. This release uses schema version 3.
+
+### Upgrading from 0.2
+
+1. Stop intake and workers, take a verified backup and test 0.3 against a copy before upgrading the installation. Schema 2 is upgraded transactionally to schema 3, adding audit-run, report, feedback and score tables. Earlier packages refuse schema 3.
+2. Existing payment, permission, reservation and account-control records are retained. No past AI reports or scores are invented. Existing queued payments without completed audits move to human review before dispatch unless the exact payment already has an independent human approval. In-flight payments continue reconciliation; migration does not resubmit them.
+3. The omitted `audit_council` setting defaults to two local rules rounds. Explicitly configure approved model IDs and the provider key only after evaluation. Provision the bank's separate `evaluator` role with a protected human assertion for scoring. Existing development state has no automatically added evaluator token; create a fresh disposable demo to exercise this role.
+4. Run `check`, the tests against the institution's authorised gateway and an independent review before restarting intake and workers. Retain the original backup, configuration and keys for the recovery procedure.
 
 ### Upgrading from 0.1
 
 1. Stop intake and workers. Take and verify a backup with the old package; retain the old keys and deployment separately.
-2. Install 0.2 in a separate environment and test it against a copy. Opening a schema-1 database transactionally creates the new tables and derives reservation entries from existing payment state. A migration audit event identifies that reconstruction; it is not invented historical evidence. The previous package will refuse schema 2. Do not point it at the upgraded database.
+2. Install 0.3 in a separate environment and test it against a copy. Opening a schema-1 database transactionally creates the new tables and derives reservation entries from existing payment state. A migration audit event identifies that reconstruction; it is not invented historical evidence. The previous package will refuse schema 3. Do not point it at the upgraded database. Apply the cross-audit and evaluator guidance above as well.
 3. Provision an owner-only vault keyring and add `vault_keyring_file` to the configuration. Follow the keyring format and rotation process in [account security](account-security.md). Run `vault-reencrypt` while intake and workers are stopped to encrypt legacy bank identifiers. Preserve old backup keys and address plaintext remnants in old storage.
-4. Update the issuer's protected operator/reviewer flow to include `scout_actor_type: human`. Do not let agents choose this claim.
+4. Update the issuer's protected operator/reviewer/evaluator flow to include `scout_actor_type: human`. Do not let agents choose this claim.
 5. Register one canonical alias per bank account. Resolve any pre-existing duplicate aliases under the institution's migration process; do not silently merge account histories or change old mandates.
 6. Start the API with dispatch stopped. An operator proposes limits for each account and a different reviewer approves them. Integrated mode fails closed without a policy. Run `check`, the authorised bank integration tests and an independent review before resuming dispatch.
 

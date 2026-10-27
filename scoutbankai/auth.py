@@ -8,7 +8,7 @@ import jwt
 from .crypto import digest, strict_json
 from .errors import BridgeError
 
-ROLES = {"operator", "reviewer", "auditor", "customer"}
+ROLES = {"operator", "reviewer", "auditor", "customer", "evaluator"}
 ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,95}$")
 
 
@@ -65,7 +65,7 @@ class Authenticator:
                 actor_type = claims.get("scout_actor_type", "unknown")
                 if not isinstance(actor_type, str) or actor_type not in {"human", "service", "unknown"}:
                     raise ValueError()
-                if claims["role"] in {"operator", "reviewer"} and actor_type != "human":
+                if claims["role"] in {"operator", "reviewer", "evaluator"} and actor_type != "human":
                     raise ValueError()
                 receipt = claims.get("scout_action") == "grant_mandate"
                 if receipt and (not isinstance(claims.get("scout_policy_sha256"), str)

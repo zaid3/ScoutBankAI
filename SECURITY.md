@@ -17,6 +17,10 @@ The bank issuer, approved gateway, host operating system, local database access,
 | Changed payment body or idempotency key | Both are bound into the proof | TLS and trustworthy client display |
 | Agent expands its authority | Strict policy, bank-signed exact consent receipt, independent execution code | Secure bank approval channel |
 | Model manipulation or failure | No bank tools; hard limits; invalid results require review | Evaluate the selected model's usefulness and false alarms |
+| Auditors copy or hide one another's error | Independent first round, exact peer bindings, retained earlier concerns and deterministic review triggers | Models can share blind spots; agreement is not proof |
+| Peer prose carries hostile instructions | Only typed claims, status and hashes cross the peer boundary | Model summaries remain untrusted text displayed to staff |
+| Score gaming or self-grading | Separate human evaluator, one immutable label, final-round-only bounded points, no permission effect | Govern evidence quality, staff identities and collusion |
+| Interrupted audit silently permits dispatch | Missing/incomplete/flagged audits require an exact independent human approval; corrupt records stop dispatch | Monitor held queues and independently review failed audits |
 | Concurrent overspending | Atomic reservation and stored business idempotency | Bank applies its own funds and aggregate controls |
 | Multiple grants bypass an account cap | Atomic limits aggregate all agents and grants on the registered account | Canonical upstream account identity and bank-wide limits |
 | Compromised operator changes security controls | Exact proposal, independent human-attested reviewer, expiry and version checks | Secure issuer, genuine separation of staff duties and no collusion |

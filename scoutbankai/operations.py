@@ -16,6 +16,7 @@ from .connectors import HTTPBankAdapter
 from .crypto import strict_json
 from .store import verify_chain
 from .journal import verify_financial_state
+from .council import verify_audits
 from .vault import new_keyring
 
 
@@ -40,6 +41,7 @@ def configure(directory, origin, issuer, bank_url):
         "connector": {"base_url": bank_url, "cert_file": "bank-client.crt",
                       "key_file": "bank-client.key", "token_file": "bank-token.key"},
         "supervisor": {"mode": "rules"},
+        "audit_council": {"mode": "rules", "rounds": 2},
     }
     private_write(path / "config.json", json.dumps(config, indent=2) + "\n")
     return {"config": str(path / "config.json"), "status": "requires_bank_provisioning",
@@ -71,13 +73,17 @@ def check(service):
         bank.close()
     with service.store.transaction() as db:
         financial = verify_financial_state(db)
+        cross_audits = verify_audits(db)
         for table in ("accounts", "payees"):
             for row in db.execute(f"SELECT id,tenant,bank_id FROM {table}"):
                 service.vault.open(row["bank_id"], row["tenant"], table, row["id"])
     return {"status": "local_checks_passed", "mode": settings.mode, "version": __version__,
             "audit_checkpoint": service.store.verify_audit(),
             "reservation_journal": financial,
+            "cross_audits": cross_audits,
             "vault": "AES-256-GCM" if service.vault.active else "not_configured",
+            "cross_audit_states": service.store.rows("SELECT status,count(*) AS count FROM audit_runs GROUP BY status"),
+            "cross_audit_mode": settings.audit_council["mode"],
             "payment_states": service.store.rows("SELECT status,count(*) AS count FROM payments GROUP BY status"),
             "network_contacted": False, "bank_acceptance": "requires_authorised_environment"}
 
@@ -95,6 +101,7 @@ def backup(service, directory, anchor=None):
             raise ValueError("backup database integrity check failed")
         checkpoint = verify_chain(target, service.settings.audit_key, anchor)
         financial = verify_financial_state(target)
+        cross_audits = verify_audits(target)
         schema = target.execute("PRAGMA user_version").fetchone()[0]
         target.execute("PRAGMA journal_mode=DELETE")
     with database.open("rb") as file:
@@ -102,6 +109,7 @@ def backup(service, directory, anchor=None):
     manifest = {"version": __version__, "schema": schema, "created_at": int(time.time()),
                 "database": "scout.db", "sha256": checksum,
                 "reservation_journal": financial,
+                "cross_audits": cross_audits,
                 "audit_checkpoint": checkpoint, "keys_included": False,
                 "recovery": "Pause dispatch and reconcile the entire backup gap with the bank before resuming."}
     private_write(destination / "manifest.json", json.dumps(manifest, indent=2) + "\n")
