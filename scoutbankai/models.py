@@ -67,6 +67,34 @@ class PauseRequest(StrictModel):
     paused: bool
 
 
+class CancelPaymentRequest(StrictModel):
+    request_hash: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+    reason: Annotated[str, Field(min_length=5, max_length=240)]
+
+
+class RestoreControlRequest(StrictModel):
+    source_hash: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+    expected_version: Annotated[int, Field(ge=0)]
+    reason: Annotated[str, Field(min_length=5, max_length=240)]
+
+
+class TimelineQuery(StrictModel):
+    actor: Annotated[str, Field(min_length=1, max_length=160)] | None = None
+    action: Annotated[str, Field(pattern=r"^[a-z][a-z0-9_]{0,95}$")] | None = None
+    object_id: Identifier | None = None
+    from_time: Annotated[int, Field(ge=0, le=253402300799)] | None = None
+    to_time: Annotated[int, Field(ge=0, le=253402300799)] | None = None
+    before_seq: Annotated[int, Field(ge=1)] | None = None
+    snapshot_seq: Annotated[int, Field(ge=0)] | None = None
+    limit: Annotated[int, Field(ge=1, le=100)] = 50
+
+    @model_validator(mode="after")
+    def ordered_dates(self):
+        if self.from_time is not None and self.to_time is not None and self.from_time > self.to_time:
+            raise ValueError("from_time must not follow to_time")
+        return self
+
+
 class Advisory(StrictModel):
     require_review: bool
     reason: Literal["routine", "unusual_pattern", "insufficient_context", "provider_unavailable"]

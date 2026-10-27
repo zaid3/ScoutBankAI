@@ -1,17 +1,17 @@
 # Verification results
 
-Release: `0.3.0rc1`. Verification date: 27 October 2026.
+Release: `0.4.0rc1`. Verification date: 27 October 2026.
 
 ## Executed locally
 
 | Check | Result | Scope |
 | --- | --- | --- |
-| Python test suite | 205 passed | Prior identity, consent, account, journal, encryption, connector and recovery controls, plus repeated audits, peer bindings, provider failures, scoring and evaluator separation |
+| Python test suite | 230 passed | Prior controls and audits, plus historical pagination/filtering, cancellation races, restoration approvals, stale versions and tenant isolation |
 | HTTPS integration | Passed | Actual loopback TCP with generated CA, verified server certificates and a separate bank HTTP service |
 | Mutual TLS boundary | Passed | Worker client certificate accepted; a caller without a client certificate rejected; an untrusted server certificate not accepted |
 | Complete payment flow | Passed | Bank-issued staff/customer JWTs, exact approval receipt, agent enrolment, SDK proof, API reservation, worker dispatch and confirmed fixture settlement |
 | Duplicate business request | Passed | Repeated signed requests returned the same operation; the separate bank recorded one payment and one debit |
-| Browser console | Passed | Real API policy proposal, control approval, reservations, payment review, export, two audit rounds, independent evaluator labels, calculated points and role-specific controls |
+| Browser console | Passed | Existing controls/audits, historical search/pagination/export, pending cancellation, separate restoration approval, preserved history and role-specific controls |
 | Desktop/mobile layout | Passed | Chromium at 1440 × 1000 and 390 × 844; no horizontal overflow; screenshots inspected |
 | Browser credential handling | Passed | No token in localStorage or sessionStorage; token field cleared after connection; disconnect removes the visible records |
 | Package build and clean installation | Passed | Wheel installed in a fresh virtual environment; CLI, demo, configuration check, backup, static assets and authenticated OpenAPI verified |
@@ -22,6 +22,8 @@ The added adversarial cases cover two agents with separate mandates racing again
 Cross-audit cases cover two/three rounds, independent first reports, exact peer coverage, forged context/peer hashes, attempted self-review, hostile free-text exclusion, sticky disagreements, unanimous model mistakes, capacity exhaustion, crashes and idempotent retries. Evaluator cases check role/tenant boundaries, explicit issuer human assertions, separation from both approving and rejecting payment reviewers, duplicate labels, stale result hashes, mandatory controls and bounded positive/negative scoring. Report corruption blocks reading, startup and dispatch. A schema-2 upgrade preserves queued work and requires human review when no prior audit or approval exists.
 
 The OpenAI audit adapter is exercised through controlled HTTP transports for the fixed endpoint, strict schema, credential separation, refused/incomplete/invalid output, redirects, provider errors, oversized responses and duplicate JSON members. These tests verify integration and failure handling; they do not establish the accuracy or independence of live models.
+
+Timeline tests page beyond the earlier bounded overview, hold a stable sequence snapshot while new events arrive, filter exact actor/action/object/time and reject altered signatures. Recovery tests cover cancellation during screening, concurrent dispatch, repeated cancellation, post-dispatch refusal, exact request binding and role separation. Restored policies require a new independent approval; stale versions, invalid sources and already-current policies are rejected. Restoring limits retains freezes, prior approvals and cancelled payment state. Schema 3 is unchanged from 0.3.
 
 The Python suite ran on Python 3.12.14. Browser automation used Playwright 1.62.1 and Chromium 153 in the local execution environment. CI also defines Python 3.11, 3.12 and 3.13 jobs and a separate browser job. A configured CI job is not itself a passing run; consult the repository's actual Actions results for each commit.
 

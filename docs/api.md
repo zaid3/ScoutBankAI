@@ -17,12 +17,17 @@ Use `Authorization: Bearer <bank-issued token>` in integrated mode. Development 
 | `POST /v1/agents/{id}/suspend` | operator | Suspend an agent and cancel undispatched work |
 | `POST /v1/pause` | operator | Pause immediately; direct resume is development-only |
 | `POST /v1/payments/{id}/review` | independent reviewer | Submit `decision` and the exact `request_hash` |
+| `POST /v1/payments/{id}/cancel` | operator | Cancel an exact request only before dispatch; supply hash and reason |
+| `POST /v1/timeline/search` | operator, reviewer, auditor or evaluator | Read-only filtered historical search with a stable snapshot and pagination |
 | `GET /v1/overview` | operator, reviewer, auditor or evaluator | Read the bounded tenant snapshot |
 | `GET /v1/audit/verify` | operator or auditor | Verify the installation audit chain and return its latest checkpoint |
 | `GET /v1/openapi.json` | operator or auditor | Read the generated OpenAPI schema |
 | `GET /v1/controls` | operator, reviewer, auditor or evaluator | Read up to 200 account policies and 100 control changes |
 | `POST /v1/control-changes` | operator | Propose account limits, account reopening or bank resume |
 | `POST /v1/control-changes/{id}/review` | independent reviewer | Approve or reject the exact proposal hash |
+| `GET /v1/control-changes/{id}` | operator, reviewer, auditor or evaluator | Read one historical control proposal and verify its hash |
+| `GET /v1/accounts/{id}/controls` | operator, reviewer, auditor or evaluator | Read one current account policy and version |
+| `POST /v1/control-changes/{id}/restore` | operator | Propose previously approved limits for fresh independent review |
 | `POST /v1/accounts/{id}/freeze` | operator | Freeze the account immediately and cancel undispatched work |
 | `GET /v1/journal/verify` | operator or auditor | Check tenant reservation entries, payment hashes and remaining grant budgets |
 | `GET /v1/audit-agents` | operator, reviewer, auditor or evaluator | Read the latest 100 cross-audits and labelled current-model scores |
@@ -30,6 +35,8 @@ Use `Authorization: Bearer <bank-issued token>` in integrated mode. Development 
 | `POST /v1/payments/{id}/audit-feedback` | independent evaluator | Record an immutable evidence label and calculate points once |
 
 Required registration, permission and review fields are defined in [models.py](../scoutbankai/models.py). Amounts use integer minor units; GBP, EUR and USD are supported. An amount of `5000` means 50.00 of the selected currency. Floating-point money and arbitrary currencies are rejected.
+
+See [timeline and recovery](timeline-recovery.md) for filters, cursor use, cancellation hashes and restoration payloads. Historical queries do not restore state. Dispatched/unknown/settled payments cannot be cancelled through this API.
 
 The mandate defines the account, agent, recipient allowlist, currency, permitted API actions, per-payment cap, total delegated budget, review threshold, expiry and maximum requests per minute. It lasts at most 30 days. The budget is a grant budget, not a daily reset or a substitute for bank funds checks.
 

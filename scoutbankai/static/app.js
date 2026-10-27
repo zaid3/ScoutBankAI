@@ -1,5 +1,6 @@
 "use strict";
 let token = "", snapshot = null, sessionGeneration = 0, selectedAudit = null, auditSelection = 0;
+let timelineSnapshot = null, timelineFilters = {}, timelineRequest = 0;
 const $ = id => document.getElementById(id);
 const readable = value => String(value || "").replaceAll("_", " ");
 const date = value => new Date(value * 1000).toLocaleString();
@@ -43,6 +44,18 @@ function render(data) {
       }));
       row.append(controls);
     }
+    if (["screening", "review", "queued"].includes(payment.status) && data.role === "operator") {
+      const controls = node("div", undefined, "review-actions");
+      controls.append(action("Cancel before dispatch", async () => {
+        const reason = window.prompt("Why should this pending payment be cancelled? Enter at least five characters. The request cannot be reopened; a new payment would need its own authorisation.");
+        if (reason === null) return;
+        if (reason.trim().length < 5) throw new Error("Enter a cancellation reason of at least five characters.");
+        if (!window.confirm("Cancel " + money(payment.amount, payment.currency) + " to " + payment.payee + "? This can succeed only before the bank dispatch begins.")) return;
+        await api("/v1/payments/" + payment.id + "/cancel", {request_hash: payment.request_hash, reason: reason.trim()});
+        await refresh(); message("Pending payment cancelled. Its reservation was released and the history was retained.");
+      }));
+      row.append(controls);
+    }
     paymentList.append(row);
   }
   const agents = $("agent-list"); agents.replaceChildren();
@@ -66,11 +79,6 @@ function render(data) {
       await api("/v1/mandates/" + mandate.id + "/revoke", {}); await refresh(); message("Permission revoked.");
     }));
     mandates.append(card);
-  }
-  const audit = $("audit-list"); audit.replaceChildren();
-  if (!data.audit.length) audit.append(node("li", "No audit events recorded.", "empty"));
-  for (const event of data.audit) {
-    const item = node("li"); item.append(node("strong", readable(event.action)), node("time", date(event.time)), node("p", "#" + event.seq + " · " + event.actor), node("p", event.payment_id || event.mandate_id || event.agent_id || "Installation control")); audit.append(item);
   }
 }
 function policyText(policy, currency) {
@@ -113,6 +121,11 @@ function renderControls(data) {
       card.append(node("p", account ? policyText(payload.limits, account.currency) : JSON.stringify(payload.limits), "detail"));
     }
     card.append(node("p", "Change hash: " + change.request_hash, "detail"));
+    if (payload.restores_change_id) card.append(node("p", "Restores limits from: " + payload.restores_change_id, "detail"));
+    if (role === "operator" && change.status === "approved" && payload.action === "account_limits") {
+      const current = data.accounts.find(a => a.account === payload.account_id);
+      if (current && JSON.stringify(current.policy) !== JSON.stringify(payload.limits)) card.append(action("Request restore of these limits", () => requestRestore(change.id, change.request_hash, payload.account_id, payload.limits)));
+    }
     if (role === "reviewer" && change.status === "pending" && !expired) {
       const buttons = node("div", undefined, "actions");
       for (const decision of ["approve", "reject"]) buttons.append(action(decision === "approve" ? "Approve control change" : "Reject control change", async () => {
@@ -130,6 +143,78 @@ const findingLabels = {
   high_velocity: "Request frequency needs review", unusual_pattern: "Unusual pattern supported by evidence",
   insufficient_context: "Insufficient context for a decision", peer_disagreement: "Peer claims are disputed or uncertain"
 };
+async function requestRestore(changeId, sourceHash, accountId, limits) {
+  const generation = sessionGeneration;
+  const current = await api("/v1/accounts/" + accountId + "/controls");
+  if (generation !== sessionGeneration || !token) return;
+  if (!window.confirm("Request restoration of these previously approved limits for " + accountId + "?\n\n" + policyText(limits, current.currency) + "\n\nA separate reviewer must approve this new change. Payments, freezes and history will remain as they are.")) return;
+  const reason = window.prompt("Explain why these earlier limits should be restored (at least five characters):");
+  if (reason === null) return;
+  if (reason.trim().length < 5) throw new Error("Enter a restoration reason of at least five characters.");
+  await api("/v1/control-changes/" + changeId + "/restore", {source_hash: sourceHash, expected_version: current.version, reason: reason.trim()});
+  await refresh(); message("Restoration requested. A separate reviewer must approve it before limits change. History is retained.");
+}
+function timelineInputs() {
+  const filters = {};
+  for (const [key, id] of [["actor", "timeline-actor"], ["action", "timeline-action"], ["object_id", "timeline-object"]]) {
+    if ($(id).value.trim()) filters[key] = $(id).value.trim();
+  }
+  for (const [key, id] of [["from_time", "timeline-from"], ["to_time", "timeline-to"]]) {
+    if ($(id).value) filters[key] = Math.floor(new Date($(id).value).getTime() / 1000);
+  }
+  if (filters.from_time !== undefined && filters.to_time !== undefined && filters.from_time > filters.to_time) throw new Error("The start must be before the end of the time range.");
+  return filters;
+}
+function renderTimeline() {
+  const list = $("audit-list"); list.replaceChildren();
+  for (const event of timelineSnapshot.events) {
+    const item = node("li");
+    item.append(node("strong", readable(event.action)), node("time", date(event.time)),
+      node("p", "Event #" + event.seq + " · Actor: " + event.actor),
+      node("p", event.payment_id || event.change_id || event.account_id || event.mandate_id || event.agent_id || event.payee_id || "Installation control"));
+    if (event.reason) item.append(node("p", "Reason: " + readable(event.reason)));
+    if (event.round) item.append(node("p", "Audit round " + event.round + " · " + (event.mode === "rules" ? "Deterministic checks" : "Model assessment") + " · " + (event.model || "Model not recorded")));
+    for (const [label, state] of [["Before", event.before_state], ["After", event.after_state]]) {
+      if (!state) continue;
+      const view = node("div", undefined, "historical-state"); view.append(node("h4", label + " · version " + state.version));
+      if (state.currency) view.append(node("p", state.limits ? policyText(state.limits, state.currency) : "No account limits were configured."), node("p", state.frozen ? "Account frozen" : "Account open"));
+      else if (typeof state.paused === "boolean") view.append(node("p", state.paused ? "New dispatches paused" : "New dispatches enabled"));
+      item.append(view);
+    }
+    const detail = node("details"); detail.append(node("summary", "View recorded details"));
+    const values = Object.fromEntries(Object.entries(event).filter(([key]) => !["tenant", "seq", "actor", "action", "time"].includes(key)));
+    detail.append(node("pre", JSON.stringify(values, null, 2), "event-details")); item.append(detail);
+    if (event.payment_id && event.action.startsWith("cross_audit_")) item.append(action("Inspect audit rounds", () => openAudit(event.payment_id)));
+    if (snapshot.role === "operator" && event.action === "control_change_approved" && event.action_type === "account_limits") {
+      item.append(action("Request restore of recorded limits", async () => {
+        const generation = sessionGeneration, change = await api("/v1/control-changes/" + event.change_id);
+        if (generation !== sessionGeneration || !token) return;
+        await requestRestore(change.id, change.request_hash, change.payload.account_id, change.payload.limits);
+      }));
+    }
+    list.append(item);
+  }
+  if (!timelineSnapshot.events.length) list.append(node("li", "No recorded events match these filters.", "empty"));
+  $("timeline-feedback").textContent = timelineSnapshot.events.length + " events loaded through snapshot #" + timelineSnapshot.snapshot_seq + ". Returned event signatures checked. Use Verify chain for the complete chain.";
+  $("timeline-older").hidden = !timelineSnapshot.next_before_seq;
+}
+async function loadTimeline(reset = true) {
+  const generation = sessionGeneration, request = ++timelineRequest;
+  const query = {...timelineFilters};
+  if (!reset && timelineSnapshot) Object.assign(query, {snapshot_seq: timelineSnapshot.snapshot_seq, before_seq: timelineSnapshot.next_before_seq});
+  const page = await api("/v1/timeline/search", query);
+  if (generation !== sessionGeneration || request !== timelineRequest || !token) return;
+  timelineSnapshot = {...page, events: reset || !timelineSnapshot ? page.events : [...timelineSnapshot.events, ...page.events]};
+  renderTimeline();
+}
+$("timeline-form").addEventListener("submit", event => {
+  event.preventDefault(); busy(event.submitter, async () => {
+    try { timelineFilters = timelineInputs(); await loadTimeline(); }
+    catch (error) { $("timeline-feedback").textContent = error.message; $("timeline-feedback").focus(); throw error; }
+  });
+});
+$("timeline-reset").addEventListener("click", event => busy(event.currentTarget, async () => { $("timeline-form").reset(); timelineFilters = {}; await loadTimeline(); }));
+$("timeline-older").addEventListener("click", event => busy(event.currentTarget, () => loadTimeline(false)));
 function renderCouncil(data) {
   $("council-mode").textContent = data.mode === "rules" ? "Deterministic rules" : "AI model audits";
   $("council-description").textContent = data.rounds + " rounds · 3 audit roles · " +
@@ -137,7 +222,7 @@ function renderCouncil(data) {
   const scores = $("audit-scores"); scores.replaceChildren();
   for (const score of data.scores) {
     const card = node("article", undefined, "audit-score");
-    card.append(node("h3", readable(score.role)), node("strong", score.evaluated ? score.points + " points" : "Not yet scored"),
+    card.append(node("h3", readable(score.role)), node("strong", score.evaluated ? score.points + (Math.abs(score.points) === 1 ? " point" : " points") : "Not yet scored"),
       node("p", score.evaluated + " independently assessed requests", "detail"),
       node("p", score.evaluated ? "Average: " + score.average_points.toFixed(1) + " / request · range −10 to +10" : "An independent evaluator must label the evidence first.", "detail"),
       node("p", data.configured_models[score.role] || "rules-v1", "detail"));
@@ -221,8 +306,8 @@ $("evaluation-form").addEventListener("submit", event => {
     await refresh(); await openAudit(selected.payment_id, false); message("Independent assessment recorded. Points updated; payment authority is unchanged.");
   });
 });
-async function refresh() { const generation = sessionGeneration; const data = await api("/v1/overview"); if (generation !== sessionGeneration || !token) return; const controls = await api("/v1/controls"); if (generation !== sessionGeneration || !token) return; const council = await api("/v1/audit-agents"); if (generation !== sessionGeneration || !token) return; render(data); renderControls(controls); renderCouncil(council); }
-function disconnect() { sessionGeneration++; auditSelection++; token = ""; snapshot = null; selectedAudit = null; $("token").value = ""; $("workspace").hidden = true; $("login").hidden = false; $("connection").textContent = "Disconnected"; $("connection").className = "connection"; $("limits-form").reset(); $("limit-feedback").textContent = ""; $("evaluation-form").reset(); $("evaluation-feedback").textContent = ""; $("audit-detail").hidden = true; for (const id of ["payment-list", "agent-list", "mandate-list", "audit-list", "account-controls", "control-changes", "limit-account", "audit-scores", "audit-runs", "audit-detail-summary", "audit-rounds", "audit-evaluation"]) $(id).replaceChildren(); }
+async function refresh() { const generation = sessionGeneration; const data = await api("/v1/overview"); if (generation !== sessionGeneration || !token) return; const controls = await api("/v1/controls"); if (generation !== sessionGeneration || !token) return; const council = await api("/v1/audit-agents"); if (generation !== sessionGeneration || !token) return; render(data); renderControls(controls); renderCouncil(council); await loadTimeline(); }
+function disconnect() { sessionGeneration++; auditSelection++; timelineRequest++; token = ""; snapshot = null; selectedAudit = null; timelineSnapshot = null; timelineFilters = {}; $("timeline-form").reset(); $("timeline-feedback").textContent = ""; $("timeline-older").hidden = true; $("token").value = ""; $("workspace").hidden = true; $("login").hidden = false; $("connection").textContent = "Disconnected"; $("connection").className = "connection"; $("limits-form").reset(); $("limit-feedback").textContent = ""; $("evaluation-form").reset(); $("evaluation-feedback").textContent = ""; $("audit-detail").hidden = true; for (const id of ["payment-list", "agent-list", "mandate-list", "audit-list", "account-controls", "control-changes", "limit-account", "audit-scores", "audit-runs", "audit-detail-summary", "audit-rounds", "audit-evaluation"]) $(id).replaceChildren(); }
 $("connect-form").addEventListener("submit", event => { event.preventDefault(); sessionGeneration++; token = $("token").value.trim(); $("token").value = ""; busy(event.submitter, async () => { await refresh(); message(""); }); });
 $("refresh").addEventListener("click", event => busy(event.currentTarget, refresh));
 $("disconnect").addEventListener("click", () => { disconnect(); message(""); });
@@ -247,4 +332,4 @@ $("limits-form").addEventListener("submit", event => { event.preventDefault(); b
 }); });
 $("verify-journal").addEventListener("click", event => busy(event.currentTarget, async () => { const result = await api("/v1/journal/verify"); message("Reservations verified for " + result.payments_checked + " payments. Customer balances remain with the connected bank."); }));
 $("verify").addEventListener("click", event => busy(event.currentTarget, async () => { const result = await api("/v1/audit/verify"); message("Audit chain verified through event " + result.checkpoint.seq + ". Checkpoint: " + result.checkpoint.hash + ". Save this outside the installation."); }));
-$("export").addEventListener("click", () => { if (!snapshot) return; const blob = new Blob([JSON.stringify({exported_at: new Date().toISOString(), scope: "latest visible tenant events", events: snapshot.audit}, null, 2)], {type: "application/json"}); const url = URL.createObjectURL(blob), link = node("a"); link.href = url; link.download = "scoutbankai-audit-events.json"; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); });
+$("export").addEventListener("click", () => { if (!timelineSnapshot) return; const blob = new Blob([JSON.stringify({exported_at: new Date().toISOString(), scope: "loaded filtered tenant events", filters: timelineFilters, ...timelineSnapshot}, null, 2)], {type: "application/json"}); const url = URL.createObjectURL(blob), link = node("a"); link.href = url; link.download = "scoutbankai-audit-events.json"; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); });

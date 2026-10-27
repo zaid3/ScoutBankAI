@@ -4,7 +4,7 @@ import secrets
 
 from .crypto import canonical, digest
 from .errors import BridgeError
-from .models import AccountLimits
+from .models import AccountLimits, ControlProposal
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS account_controls(
@@ -67,7 +67,6 @@ class Controls:
 
     def propose(self, actor, model):
         self.require(actor, "operator")
-        now, identifier = self.service.clock(), "chg_" + secrets.token_hex(12)
         with self.store.transaction() as db:
             if model.action == "resume_bank":
                 db.execute("INSERT OR IGNORE INTO tenant_controls(tenant) VALUES(?)", (actor.tenant,))
@@ -83,14 +82,51 @@ class Controls:
                         if bank_id in seen:
                             raise BridgeError("duplicate_bank_account_aliases", 409)
                         seen.add(bank_id)
-            payload = {**model.model_dump(), "tenant": actor.tenant, "expected_version": version,
-                       "proposer": actor.subject, "created_at": now, "expires_at": now + 900}
-            request_hash = digest(canonical(payload))
-            db.execute("INSERT INTO control_changes(id,tenant,payload,request_hash,proposer,created,expires) VALUES(?,?,?,?,?,?,?)",
-                       (identifier, actor.tenant, canonical(payload).decode(), request_hash, actor.subject, now, now + 900))
-            self.store.event(db, actor.tenant, "control_change_proposed", actor.subject, now,
-                             change_id=identifier, request_hash=request_hash, action_type=model.action)
+            return self._record_proposal(db, actor, model, version)
+
+    def _record_proposal(self, db, actor, model, version, restores=None):
+        now, identifier = self.service.clock(), "chg_" + secrets.token_hex(12)
+        payload = {**model.model_dump(), "tenant": actor.tenant, "expected_version": version,
+                   "proposer": actor.subject, "created_at": now, "expires_at": now + 900}
+        if restores:
+            payload["restores_change_id"] = restores
+        request_hash = digest(canonical(payload))
+        db.execute("INSERT INTO control_changes(id,tenant,payload,request_hash,proposer,created,expires) VALUES(?,?,?,?,?,?,?)",
+                   (identifier, actor.tenant, canonical(payload).decode(), request_hash, actor.subject, now, now + 900))
+        self.store.event(db, actor.tenant, "control_change_proposed", actor.subject, now,
+                         change_id=identifier, request_hash=request_hash, action_type=model.action,
+                         account_id=model.account_id, reason=model.reason, restores_change_id=restores,
+                         proposed_limits=model.limits.model_dump() if model.limits else None,
+                         before_state=self._state(db, actor.tenant, payload))
         return {"id": identifier, "request_hash": request_hash, "status": "pending", "proposal": payload}
+
+    def _state(self, db, tenant, payload):
+        if payload["action"] == "resume_bank":
+            return {"paused": bool(db.execute("SELECT paused FROM tenants WHERE id=?", (tenant,)).fetchone()[0]),
+                    "version": db.execute("SELECT version FROM tenant_controls WHERE tenant=?", (tenant,)).fetchone()[0]}
+        row = self.account(db, tenant, payload["account_id"])
+        return {"limits": json.loads(row["policy"]) if row["policy"] else None,
+                "frozen": bool(row["frozen"]), "version": row["version"],
+                "currency": db.execute("SELECT currency FROM accounts WHERE tenant=? AND id=?", (tenant, payload["account_id"])).fetchone()[0]}
+
+    def restore(self, actor, identifier, model):
+        self.require(actor, "operator")
+        with self.store.transaction() as db:
+            source = db.execute("SELECT * FROM control_changes WHERE id=? AND tenant=?", (identifier, actor.tenant)).fetchone()
+            if not source:
+                raise BridgeError("control_change_not_found", 404)
+            payload = json.loads(source["payload"])
+            if (source["status"] != "approved" or source["request_hash"] != model.source_hash
+                    or digest(canonical(payload)) != model.source_hash or payload["action"] != "account_limits"):
+                raise BridgeError("control_restore_source_invalid", 409)
+            account = self.account(db, actor.tenant, payload["account_id"])
+            if account["version"] != model.expected_version:
+                raise BridgeError("control_version_changed", 409)
+            limits = AccountLimits(**payload["limits"])
+            if account["policy"] and json.loads(account["policy"]) == limits.model_dump():
+                raise BridgeError("control_limits_already_current", 409)
+            proposal = ControlProposal(action="account_limits", account_id=payload["account_id"], limits=limits, reason=model.reason)
+            return self._record_proposal(db, actor, proposal, account["version"], restores=identifier)
 
     def review(self, actor, identifier, model):
         self.require(actor, "reviewer")
@@ -105,6 +141,7 @@ class Controls:
             if (change["status"] != "pending" or change["expires"] <= now or change["request_hash"] != model.request_hash
                     or digest(canonical(payload)) != model.request_hash):
                 raise BridgeError("control_change_state_changed", 409)
+            before_state = self._state(db, actor.tenant, payload)
             if model.decision == "approve":
                 if payload["action"] == "resume_bank":
                     changed = db.execute("UPDATE tenant_controls SET version=version+1 WHERE tenant=? AND version=?",
@@ -127,7 +164,10 @@ class Controls:
             status = "approved" if model.decision == "approve" else "rejected"
             db.execute("UPDATE control_changes SET status=?,reviewed_by=? WHERE id=?", (status, actor.subject, identifier))
             self.store.event(db, actor.tenant, "control_change_" + status, actor.subject, now,
-                             change_id=identifier, request_hash=model.request_hash, action_type=payload["action"])
+                             change_id=identifier, request_hash=model.request_hash, action_type=payload["action"],
+                             account_id=payload["account_id"], reason=payload["reason"],
+                             restores_change_id=payload.get("restores_change_id"),
+                             before_state=before_state, after_state=self._state(db, actor.tenant, payload))
         return {"id": identifier, "status": status, "reviewed_by": actor.subject}
 
     def freeze(self, actor, account):
@@ -146,3 +186,20 @@ class Controls:
         return {"accounts": [{**r, "policy": json.loads(r["policy"]) if r["policy"] else None} for r in accounts],
                 "changes": [{**r, "payload": json.loads(r["payload"])} for r in changes],
                 "limits": {"accounts": 200, "changes": 100}}
+
+    def account_detail(self, actor, account):
+        rows = self.store.rows("SELECT c.account,c.policy,c.version,c.frozen,a.currency FROM account_controls c JOIN accounts a ON a.tenant=c.tenant AND a.id=c.account WHERE c.tenant=? AND c.account=?", (actor.tenant, account))
+        if not rows:
+            raise BridgeError("account_not_found", 404)
+        row = rows[0]
+        return {**row, "policy": json.loads(row["policy"]) if row["policy"] else None}
+
+    def change_detail(self, actor, identifier):
+        rows = self.store.rows("SELECT * FROM control_changes WHERE tenant=? AND id=?", (actor.tenant, identifier))
+        if not rows:
+            raise BridgeError("control_change_not_found", 404)
+        row = rows[0]
+        payload = json.loads(row["payload"])
+        if digest(canonical(payload)) != row["request_hash"]:
+            raise BridgeError("control_change_integrity_failure", 503)
+        return {**row, "payload": payload}

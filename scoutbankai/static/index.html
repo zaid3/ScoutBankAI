@@ -17,7 +17,7 @@
   <section id="workspace" hidden>
     <div class="toolbar"><div><span id="mode" class="pill"></span><span id="updated" class="muted"></span></div><div class="actions"><button id="refresh" class="secondary">Refresh</button><button id="pause" class="secondary" hidden>Pause new dispatches</button><button id="disconnect" class="quiet">Disconnect</button></div></div>
     <div class="metrics"><article class="metric"><p>Registered agents</p><strong id="agent-count">0</strong><span id="agent-detail">In this view</span></article><article class="metric"><p>Awaiting review</p><strong id="review-count">0</strong><span>Independent decision required</span></article><article class="metric"><p>Awaiting bank outcome</p><strong id="pending-count">0</strong><span>Reservations remain in place</span></article><article class="metric"><p>Settled payments</p><strong id="settled-count">0</strong><span>Bank-confirmed outcomes in this view</span></article></div>
-    <nav class="tabs" aria-label="Console sections"><a href="#payments">Payments</a><a href="#agents">Agents & permissions</a><a href="#controls">Account controls</a><a href="#audit-agents">Audit agents</a><a href="#audit">Audit trail</a></nav>
+    <nav class="tabs" aria-label="Console sections"><a href="#payments">Payments</a><a href="#agents">Agents & permissions</a><a href="#controls">Account controls</a><a href="#audit-agents">Audit agents</a><a href="#audit">Activity timeline</a></nav>
     <section id="payments" class="panel"><div class="section-title"><div><p class="eyebrow">EXECUTION CONTROL</p><h2>Payment decisions</h2></div><span class="muted">Latest 200 requests</span></div><div id="payment-list" class="payment-list"></div></section>
     <div class="columns"><section id="agents" class="panel"><div class="section-title"><div><p class="eyebrow">VERIFIED KEYS</p><h2>Registered agents</h2></div></div><div id="agent-list"></div></section><section class="panel"><div class="section-title"><div><p class="eyebrow">CUSTOMER AUTHORITY</p><h2>Delegated permissions</h2></div></div><div id="mandate-list"></div></section></div>
     <section id="controls" class="panel"><div class="section-title"><div><p class="eyebrow">SHARED ACCOUNT PROTECTION</p><h2>Account controls</h2></div><button id="verify-journal" class="secondary">Verify reservations</button></div><p class="muted">Limits apply across all agents and permissions for an account. Sensitive changes need a separate reviewer. Latest 200 accounts and 100 changes.</p><div id="account-controls"></div>
@@ -48,7 +48,18 @@
         </form>
       </section>
     </section>
-    <section id="audit" class="panel"><div class="section-title"><div><p class="eyebrow">DECISION EVIDENCE</p><h2>Audit trail</h2></div><div class="actions"><button id="verify" class="secondary">Verify chain</button><button id="export" class="secondary">Export visible events</button></div></div><p class="muted">Latest 100 events. Keep exported checkpoints outside this installation to detect history truncation.</p><ol id="audit-list" class="timeline"></ol></section>
+    <section id="audit" class="panel"><div class="section-title"><div><p class="eyebrow">WHO · WHAT · WHEN</p><h2>Activity timeline</h2></div><div class="actions"><button id="verify" class="secondary">Verify chain</button><button id="export" class="secondary">Export visible events</button></div></div>
+      <p class="muted">Search recorded history, inspect decisions and load older events. Times use this browser's local timezone. Viewing an earlier event does not change the live system.</p>
+      <form id="timeline-form" class="control-form">
+        <div><label for="timeline-actor">Actor ID (exact)</label><input id="timeline-actor" maxlength="160" autocomplete="off"></div>
+        <div><label for="timeline-object">Payment, account or change ID</label><input id="timeline-object" maxlength="96" autocomplete="off"></div>
+        <div><label for="timeline-action">Action code (exact)</label><input id="timeline-action" maxlength="96" autocomplete="off" placeholder="For example, review_approved"></div>
+        <div><label for="timeline-from">From date and time</label><input id="timeline-from" type="datetime-local"></div>
+        <div><label for="timeline-to">To date and time</label><input id="timeline-to" type="datetime-local"></div>
+        <div class="actions full"><button type="submit">Search history</button><button id="timeline-reset" type="button" class="secondary">Clear filters</button></div>
+      </form><p id="timeline-feedback" class="detail" role="status" aria-live="polite" tabindex="-1"></p><ol id="audit-list" class="timeline"></ol><button id="timeline-older" class="secondary" hidden>Load older events</button>
+      <p class="muted">Keep independently verified checkpoints outside this installation. Payment cancellation is available only before dispatch. Restoring earlier account limits creates a new approval request and preserves history.</p>
+    </section>
     <p class="footer-note">Revocation stops new work and cancels requests that have not been dispatched. Payments already sent to a bank require reconciliation.</p>
   </section>
   <footer><span>ScoutBankAI</span><span>Created and maintained by A Haque (zaid)</span><span id="supervisor-label">Bank-controlled permissions</span></footer>

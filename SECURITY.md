@@ -32,6 +32,7 @@ The bank issuer, approved gateway, host operating system, local database access,
 | Lost bank response | Durable uncertainty and status lookup, no blind retries | Authoritative bank journal and reconciliation process |
 | Compromised agent | Suspend its identity and revoke permissions | Detection and incident response supplied by the institution |
 | Audit modification | Application append-only writes and keyed chain verification | External checkpoint retention, independent key protection |
+| Unsafe rollback or history rewrite | Read-only historical search; exact pre-dispatch cancellation; new independently approved restoration of old limits | Bank reversal authority and recovery-gap reconciliation remain separate |
 | Malicious outbound destinations | Fixed connector origin, TLS verification, no redirects or caller URLs | Egress firewall and approved configuration |
 | API abuse | Body/header limits, strict JSON and persistent request/velocity limits | Edge rate limits, DDoS protection and workload sizing |
 

@@ -8,7 +8,7 @@ Created and maintained by **A Haque (zaid)**. [GitHub profile](https://github.co
 
 ## Release status
 
-**0.3.0rc1 is an installable release candidate.** The API, agent client, operator console, durable payment state machine, consent checks, HTTP bank connector and optional model reviewers are implemented. This release adds repeated cross-audits by policy, evidence and challenge roles, retained peer checks and independently assessed quality points. Existing shared account limits, independent control approvals, account isolation, reservation journal and encrypted bank identifiers remain in place. The verified suite contains 205 passing Python tests, including real HTTPS and mutual TLS integration. Browser checks cover the audit rounds, evaluator permissions and points alongside the existing payment controls. See [verification results](docs/verification.md) for the exact scope.
+**0.4.0rc1 is an installable release candidate.** The API, agent client, operator console, durable payment state machine, consent checks, HTTP bank connector and optional model reviewers are implemented. This release adds a searchable activity timeline, cancellation before dispatch and independently approved restoration of earlier account limits. It retains repeated cross-audits, human-labelled quality points, shared limits, account isolation, the reservation journal and encrypted bank identifiers. The verified suite contains 230 passing Python tests, including real HTTPS and mutual TLS integration. Browser checks cover historical search and recovery alongside payment controls, audit rounds and evaluator permissions. See [verification results](docs/verification.md) for the exact scope and [release readiness](docs/release-readiness.md) for publication and bank-acceptance boundaries.
 
 Live bank acceptance has not been completed. The included development bank uses simulated money. The integrated connector makes actual HTTPS requests to an operator-configured bank gateway; that gateway must implement the documented contract and connect to the institution's authorised systems. This release is not FAPI-certified, a regulated bank, a replacement core ledger, or a universal connector to every bank.
 
@@ -36,6 +36,7 @@ ScoutBankAI gives an agent a separate identity and a bounded permission. Its int
 | An agent earns credit merely by agreeing with another agent | A separate human evaluator labels evidence; a fixed rubric scores final reports once | Performance can be compared without awarding financial authority or inventing accuracy claims |
 | A customer withdraws consent or an agent is compromised | Permission revocation, agent suspension and a bank pause control | Undispatched work can be stopped while existing bank operations are reconciled |
 | Staff cannot reconstruct why an action happened | Permission, request, review, dispatch and outcome are recorded in one event chain | Operations teams have evidence for investigation and reconciliation |
+| An operator needs to recover from an unwanted instruction or policy change | Exact pre-dispatch cancellation and a new independent approval to restore earlier limits | Recovery preserves the original history and cannot rewind bank outcomes |
 
 These controls apply to the integrated API path. A bank still needs its own controls for account sessions outside that path, customer verification, fraud, sanctions, available funds and settlement.
 
@@ -79,6 +80,8 @@ For banks, the intended value is a controlled route for authorised agents to use
 | Existing banking systems | Separate HTTPS/mTLS worker connector, fixed bank origin and a documented adapter contract |
 | Operations | Configuration checks, consistent SQLite backups, audit checkpoints and a documented recovery procedure |
 | Operator console | Actual recorded requests, review actions, agent suspension, revocation, pause, refresh and audit verification |
+| Activity timeline | Actor/action/record/time filters, stable historical pagination, signed event details and filtered export |
+| Controlled recovery | Cancel pending payments once; restore approved account limits through a new exact, version-checked proposal |
 
 No bank passwords, card numbers, private agent keys or unrestricted remote tool URLs are accepted by the agent API. The model receives bounded payment metadata only and has no bank tools or execution credentials.
 
@@ -193,6 +196,12 @@ By default these roles run deterministic local checks, clearly labelled in the c
 
 ## Operational boundaries
 
+### Timeline and recovery
+
+The **Activity timeline** shows who acted, when, on which record and with what recorded reason. Search by actor, action, record ID or time range, inspect before/after control states and load older events. Earlier history is read-only; it cannot silently change the live system.
+
+Operators can cancel a payment before dispatch or request restoration of previously approved account limits. Restoring limits requires a separate reviewer and a current version check. It does not reopen frozen accounts, revive revoked permissions, reverse settled money or erase evidence. See [timeline and recovery](docs/timeline-recovery.md) for the exact boundaries and API.
+
 The [banking security review](docs/banking-security-review.md) maps reported risks and public bank architecture to implemented controls. The [account security guide](docs/account-security.md) explains account limits, role boundaries, the reservation journal and key rotation. Existing installations must follow the [upgrade procedure](docs/operations.md#upgrades-and-acceptance).
 
 The database is a single-installation SQLite store with transactional writes. This release does not provide distributed high availability, automated disaster recovery or a guaranteed service level. Deploy the API and worker on the same trusted host/storage boundary. Do not share a SQLite database over a network filesystem.
@@ -214,8 +223,11 @@ A completed transfer is not automatically reversible. Revocation can stop undisp
 * [Banking security research and coverage](docs/banking-security-review.md)
 * [Account controls, approvals and encryption](docs/account-security.md)
 * [Repeated cross-audits, model setup and quality points](docs/cross-audits.md)
+* [Activity timeline and controlled recovery](docs/timeline-recovery.md)
+* [Public release review and next acceptance work](docs/release-readiness.md)
+* [Licensing and commercial-use choices](docs/licensing.md)
 
 ## Licence
 
-Apache License 2.0. See [LICENSE](LICENSE).
+Apache License 2.0. See [LICENSE](LICENSE). Commercial reuse is allowed under its terms; the code does not require a paid commercial licence. [Licensing choices](docs/licensing.md) explains how paid services and alternative future models differ.
 

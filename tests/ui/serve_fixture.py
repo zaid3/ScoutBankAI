@@ -9,6 +9,9 @@ from scoutbankai.bootstrap import initialize, sample_authority, submit_sample
 directory, port = sys.argv[1], int(sys.argv[2])
 settings, service, credentials = initialize(directory, f"http://127.0.0.1:{port}")
 authority = sample_authority(service, credentials)
+with service.store.transaction() as db:
+    for index in range(65):
+        service.store.event(db, authority["operator"].tenant, "fixture_history", "fixture-operator", service.clock(), fixture_index=index)
 submit_sample(service, authority, 5000)
 submit_sample(service, authority, 25000)
 uvicorn.run(create_app(settings, service), host="127.0.0.1", port=port, access_log=False, log_level="error")

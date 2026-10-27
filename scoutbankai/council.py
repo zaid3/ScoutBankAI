@@ -177,7 +177,10 @@ class AuditCouncil:
                                    (payment_id, round_number, report["role"], report["model"], report["status"],
                                     canonical(report["report"]).decode() if report["report"] else None, report["report_hash"]))
                         self.store.event(db, run["tenant"], "cross_audit_report", report["role"], self.service.clock(),
-                                         payment_id=payment_id, round=round_number, report_hash=report["report_hash"], status=report["status"])
+                                         payment_id=payment_id, round=round_number, report_hash=report["report_hash"], status=report["status"],
+                                         model=report["model"], mode=self.config.mode,
+                                         require_review=report["report"]["require_review"] if report["report"] else True,
+                                         finding_codes=report["report"]["finding_codes"] if report["report"] else [])
                     db.execute("UPDATE audit_runs SET updated=? WHERE payment=?", (self.service.clock(), payment_id))
                     db.execute("UPDATE payments SET updated=? WHERE id=?", (self.service.clock(), payment_id))
                 previous, all_reports = reports, all_reports + reports

@@ -120,9 +120,13 @@ This release does not provide automatic database merging, recovery-gap reconstru
 
 Back up first, test the new package and schema against a copy, and retain the previous installation. An unsupported database schema version is rejected. This release uses schema version 3.
 
+### Upgrading from 0.3
+
+Schema 3 is unchanged. Stop intake/workers under the normal upgrade procedure, retain a verified backup and test the new package against a copy before resuming. Timeline search can read existing events; new control approvals record before/after state, but earlier missing details are not reconstructed. No policies, payments, grants or scores are rewound by the upgrade. The new restoration operation always creates a fresh proposal with independent approval. See [timeline recovery](timeline-recovery.md).
+
 ### Upgrading from 0.2
 
-1. Stop intake and workers, take a verified backup and test 0.3 against a copy before upgrading the installation. Schema 2 is upgraded transactionally to schema 3, adding audit-run, report, feedback and score tables. Earlier packages refuse schema 3.
+1. Stop intake and workers, take a verified backup and test 0.4 against a copy before upgrading the installation. Schema 2 is upgraded transactionally to schema 3, adding audit-run, report, feedback and score tables. Packages before 0.3 refuse schema 3.
 2. Existing payment, permission, reservation and account-control records are retained. No past AI reports or scores are invented. Existing queued payments without completed audits move to human review before dispatch unless the exact payment already has an independent human approval. In-flight payments continue reconciliation; migration does not resubmit them.
 3. The omitted `audit_council` setting defaults to two local rules rounds. Explicitly configure approved model IDs and the provider key only after evaluation. Provision the bank's separate `evaluator` role with a protected human assertion for scoring. Existing development state has no automatically added evaluator token; create a fresh disposable demo to exercise this role.
 4. Run `check`, the tests against the institution's authorised gateway and an independent review before restarting intake and workers. Retain the original backup, configuration and keys for the recovery procedure.
@@ -130,7 +134,7 @@ Back up first, test the new package and schema against a copy, and retain the pr
 ### Upgrading from 0.1
 
 1. Stop intake and workers. Take and verify a backup with the old package; retain the old keys and deployment separately.
-2. Install 0.3 in a separate environment and test it against a copy. Opening a schema-1 database transactionally creates the new tables and derives reservation entries from existing payment state. A migration audit event identifies that reconstruction; it is not invented historical evidence. The previous package will refuse schema 3. Do not point it at the upgraded database. Apply the cross-audit and evaluator guidance above as well.
+2. Install 0.4 in a separate environment and test it against a copy. Opening a schema-1 database transactionally creates the new tables and derives reservation entries from existing payment state. A migration audit event identifies that reconstruction; it is not invented historical evidence. Packages before 0.3 refuse schema 3. Do not point them at the upgraded database. Apply the cross-audit and evaluator guidance above as well.
 3. Provision an owner-only vault keyring and add `vault_keyring_file` to the configuration. Follow the keyring format and rotation process in [account security](account-security.md). Run `vault-reencrypt` while intake and workers are stopped to encrypt legacy bank identifiers. Preserve old backup keys and address plaintext remnants in old storage.
 4. Update the issuer's protected operator/reviewer/evaluator flow to include `scout_actor_type: human`. Do not let agents choose this claim.
 5. Register one canonical alias per bank account. Resolve any pre-existing duplicate aliases under the institution's migration process; do not silently merge account histories or change old mandates.

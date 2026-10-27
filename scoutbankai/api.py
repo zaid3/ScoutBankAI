@@ -14,10 +14,11 @@ from starlette.concurrency import run_in_threadpool
 from . import __version__
 from .crypto import digest, strict_json
 from .errors import BridgeError
-from .models import AccountRegistration, AgentRegistration, ControlProposal, MandateRequest, PauseRequest, PayeeRegistration, PaymentRequest, ReviewRequest
+from .models import AccountRegistration, AgentRegistration, CancelPaymentRequest, ControlProposal, MandateRequest, PauseRequest, PayeeRegistration, PaymentRequest, RestoreControlRequest, ReviewRequest, TimelineQuery
 from .journal import verify_financial_state
 from .audit_models import AuditFeedback
 from .service import Service
+from .timeline import search as search_timeline
 
 
 def create_app(settings, service=None):
@@ -188,6 +189,14 @@ def create_app(settings, service=None):
     def review(payment_id: str, request: Request, model: ReviewRequest):
         return service.review(principal(request, {"reviewer"}), payment_id, model)
 
+    @app.post("/v1/payments/{payment_id}/cancel")
+    def cancel_payment(payment_id: str, request: Request, model: CancelPaymentRequest):
+        return service.cancel_payment(principal(request, {"operator"}), payment_id, model)
+
+    @app.post("/v1/timeline/search")
+    def timeline(request: Request, model: TimelineQuery):
+        return search_timeline(service, principal(request, {"operator", "reviewer", "auditor", "evaluator"}), model)
+
     @app.get("/v1/audit/verify")
     def verify(request: Request):
         principal(request, {"operator", "auditor"})
@@ -198,6 +207,14 @@ def create_app(settings, service=None):
     def controls(request: Request):
         return service.controls.overview(principal(request, {"operator", "reviewer", "auditor", "evaluator"}))
 
+    @app.get("/v1/accounts/{account_id}/controls")
+    def account_controls(account_id: str, request: Request):
+        return service.controls.account_detail(principal(request, {"operator", "reviewer", "auditor", "evaluator"}), account_id)
+
+    @app.get("/v1/control-changes/{change_id}")
+    def control_change(change_id: str, request: Request):
+        return service.controls.change_detail(principal(request, {"operator", "reviewer", "auditor", "evaluator"}), change_id)
+
     @app.post("/v1/control-changes", status_code=201)
     def propose_change(request: Request, model: ControlProposal):
         return service.controls.propose(principal(request, {"operator"}), model)
@@ -205,6 +222,10 @@ def create_app(settings, service=None):
     @app.post("/v1/control-changes/{change_id}/review")
     def review_change(change_id: str, request: Request, model: ReviewRequest):
         return service.controls.review(principal(request, {"reviewer"}), change_id, model)
+
+    @app.post("/v1/control-changes/{change_id}/restore", status_code=201)
+    def restore_change(change_id: str, request: Request, model: RestoreControlRequest):
+        return service.controls.restore(principal(request, {"operator"}), change_id, model)
 
     @app.post("/v1/accounts/{account_id}/freeze")
     def freeze(account_id: str, request: Request):

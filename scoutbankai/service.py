@@ -241,6 +241,25 @@ class Service:
         db.execute("UPDATE mandates SET budget_remaining=budget_remaining+? WHERE id=?", (payment["amount"], payment["mandate"]))
         self.store.event(db, payment["tenant"], "payment_cancelled", actor, self.clock(), payment_id=payment["id"], reason=reason)
 
+    def cancel_payment(self, principal, payment_id, model):
+        self.controls.require(principal, "operator")
+        with self.store.transaction() as db:
+            row = db.execute("SELECT * FROM payments WHERE id=? AND tenant=?", (payment_id, principal.tenant)).fetchone()
+            if not row:
+                raise BridgeError("payment_not_found", 404)
+            if row["request_hash"] != model.request_hash:
+                raise BridgeError("payment_state_changed", 409)
+            if row["status"] == "cancelled" and row["reason"] == "operator_cancelled":
+                return self.public_payment(row)
+            if row["status"] not in PENDING:
+                raise BridgeError("payment_cannot_be_cancelled", 409)
+            self.store.event(db, principal.tenant, "payment_cancellation_requested", principal.subject, self.clock(),
+                             payment_id=payment_id, request_hash=model.request_hash, reason=model.reason,
+                             previous_status=row["status"], account_id=row["account"])
+            self.cancel(db, row, "operator_cancelled", principal.subject)
+            self.council.interrupt(db, payment_id)
+            return self.public_payment(db.execute("SELECT * FROM payments WHERE id=?", (payment_id,)).fetchone())
+
     def review(self, principal, payment_id, model):
         with self.store.transaction() as db:
             row = db.execute("SELECT * FROM payments WHERE id=? AND tenant=?", (payment_id, principal.tenant)).fetchone()
