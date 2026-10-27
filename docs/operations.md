@@ -4,7 +4,7 @@ ScoutBankAI runs as an API process and a bank worker on one trusted installation
 
 ## Configure an integrated installation
 
-Install the package in a dedicated Python environment and run commands as a dedicated operating-system account. The following generates only local audit and nonce keys. It does not create bank access credentials:
+Install the package in a dedicated Python environment and run commands as a dedicated operating-system account. The following generates local audit, nonce and identifier-encryption keys. It does not create bank access credentials:
 
 ```sh
 scoutbankai configure --directory /var/lib/scoutbankai \
@@ -30,7 +30,7 @@ scoutbankai serve --config /var/lib/scoutbankai/config.json
 scoutbankai worker --config /var/lib/scoutbankai/config.json
 ```
 
-Run the final two commands in separate supervised processes. `check` verifies configuration, issuer key material, connector credentials, local database integrity and the audit chain. It makes no bank request and is not a readiness certificate for a live deployment. `enable-tenant` is host administration; it must be restricted to authorised administrators.
+Run the final two commands in separate supervised processes. `check` verifies configuration, issuer key material, connector credentials, database integrity, the audit chain, the reservation journal and identifier decryption. It makes no bank request and is not a readiness certificate for a live deployment. `enable-tenant` is host administration; it must be restricted to authorised administrators. Register accounts and obtain independent approval of their shared policies before accepting payments in integrated mode.
 
 ## HTTPS and network boundaries
 
@@ -84,6 +84,8 @@ The console shows bounded snapshots, not all-time totals. Use controlled databas
 
 An operator can pause new requests and dispatches in the console. The worker continues status reconciliation. Revoke affected permissions or suspend a compromised agent. A pause or revocation cannot recall a request that has already crossed the dispatch boundary, and cannot reverse settled money.
 
+Use an account freeze to contain one affected account. It cancels undispatched work and leaves in-flight reconciliation active. In integrated mode, an independent reviewer must approve a current proposal before a paused bank can resume. Reopening a frozen account always requires that approval. See [account security](account-security.md).
+
 If a bank operation is `unknown`, investigate the bank's authoritative journal using the stored payment ID and request hash. Do not manually change it to `queued`, give it a fresh business-idempotency key, or release the reservation because a status endpoint is unavailable. The bank must establish whether a payment exists and provide a trustworthy terminal outcome. A 404 alone is not proof that no payment occurred.
 
 ## Backups and independent checkpoints
@@ -112,6 +114,17 @@ This release does not provide automatic database merging, recovery-gap reconstru
 
 ## Upgrades and acceptance
 
-Back up first, test the new package and schema against a copy, and retain the previous installation. An unsupported database schema version is rejected. The current release uses schema version 1; no cross-version migration is required within this release.
+Back up first, test the new package and schema against a copy, and retain the previous installation. An unsupported database schema version is rejected. This release uses schema version 2.
+
+### Upgrading from 0.1
+
+1. Stop intake and workers. Take and verify a backup with the old package; retain the old keys and deployment separately.
+2. Install 0.2 in a separate environment and test it against a copy. Opening a schema-1 database transactionally creates the new tables and derives reservation entries from existing payment state. A migration audit event identifies that reconstruction; it is not invented historical evidence. The previous package will refuse schema 2. Do not point it at the upgraded database.
+3. Provision an owner-only vault keyring and add `vault_keyring_file` to the configuration. Follow the keyring format and rotation process in [account security](account-security.md). Run `vault-reencrypt` while intake and workers are stopped to encrypt legacy bank identifiers. Preserve old backup keys and address plaintext remnants in old storage.
+4. Update the issuer's protected operator/reviewer flow to include `scout_actor_type: human`. Do not let agents choose this claim.
+5. Register one canonical alias per bank account. Resolve any pre-existing duplicate aliases under the institution's migration process; do not silently merge account histories or change old mandates.
+6. Start the API with dispatch stopped. An operator proposes limits for each account and a different reviewer approves them. Integrated mode fails closed without a policy. Run `check`, the authorised bank integration tests and an independent review before resuming dispatch.
+
+Rollback requires the retained pre-upgrade snapshot and the full recovery-gap procedure if any activity occurred after it. It is not safe to restore an old snapshot and blindly replay requests.
 
 Before live use, validate the institution's issuer and consent channel, gateway mappings, certificate and key rotation, bank rejection and timeout semantics, retention, recovery, workload capacity, monitoring, incident response and selected model behaviour. Obtain independent security and operational review. Repository test results are evidence for that review, not a substitute for institution acceptance.

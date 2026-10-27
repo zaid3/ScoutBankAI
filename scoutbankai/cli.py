@@ -13,7 +13,7 @@ from .config import Settings
 from .connectors import HTTPBankAdapter, MemoryBank
 from .errors import BridgeError
 from .models import ReviewRequest
-from .operations import backup, check, configure
+from .operations import backup, check, configure, reencrypt_vault
 from .service import Service
 from .worker import Worker
 
@@ -32,7 +32,7 @@ def main():
     config.add_argument("--origin", required=True)
     config.add_argument("--issuer", required=True)
     config.add_argument("--bank-url", required=True)
-    for name in ("serve", "worker", "sample", "mock-bank", "audit", "enable-tenant", "check", "backup"):
+    for name in ("serve", "worker", "sample", "mock-bank", "audit", "enable-tenant", "check", "backup", "vault-reencrypt"):
         command = sub.add_parser(name)
         command.add_argument("--config", default=".state/config.json")
         if name == "serve":
@@ -132,6 +132,8 @@ def main():
                 import uvicorn
                 from .mock_bank import create_mock_bank
                 uvicorn.run(create_mock_bank(str(parent / "mock-bank.db"), str(parent / "bank-token.key")), host="127.0.0.1", port=8091, access_log=False)
+        elif args.command == "vault-reencrypt":
+            print(json.dumps(reencrypt_vault(service), indent=2))
         elif args.command == "audit":
             anchor = json.loads(Path(args.anchor).read_text()) if args.anchor else None
             checkpoint = service.store.verify_audit(anchor)

@@ -2,11 +2,14 @@ import hashlib
 import hmac
 import json
 import sqlite3
+import time
 from contextlib import closing, contextmanager
 from pathlib import Path
 
 from .crypto import canonical
 from .errors import BridgeError
+from .controls import SCHEMA as CONTROL_SCHEMA
+from .journal import SCHEMA as JOURNAL_SCHEMA, record, verify_financial_state
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS tenants(id TEXT PRIMARY KEY, paused INTEGER NOT NULL DEFAULT 0);
@@ -39,11 +42,31 @@ class Store:
         self.path, self.audit_key = str(path), audit_key
         Path(path).parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         with closing(self.connect()) as db:
-            if db.execute("PRAGMA user_version").fetchone()[0] not in {0, 1}:
+            version = db.execute("PRAGMA user_version").fetchone()[0]
+            if version not in {0, 1, 2}:
                 raise ValueError("unsupported database schema version")
             db.execute("PRAGMA journal_mode=WAL")
-            db.executescript(SCHEMA)
-            db.execute("PRAGMA user_version=1")
+            try:
+                db.executescript("BEGIN IMMEDIATE;\n" + SCHEMA + CONTROL_SCHEMA + JOURNAL_SCHEMA)
+                version = db.execute("PRAGMA user_version").fetchone()[0]
+                if version not in {0, 1, 2}:
+                    raise ValueError("unsupported database schema version")
+                verify_chain(db, self.audit_key)
+                if version < 2:
+                    # A migration records current reservation state, not invented historic events.
+                    for row in db.execute("SELECT * FROM payments").fetchall():
+                        record(db, row, "reserve", row["created"])
+                        if row["status"] in {"cancelled", "rejected", "settled"}:
+                            record(db, row, "settle" if row["status"] == "settled" else "release", row["updated"])
+                    for tenant in db.execute("SELECT DISTINCT tenant FROM payments").fetchall():
+                        self.event(db, tenant[0], "reservation_journal_migrated", "host_operator", int(time.time()), previous_schema=version)
+                db.execute("INSERT OR IGNORE INTO account_controls(tenant,account) SELECT tenant,id FROM accounts")
+                verify_financial_state(db)
+                db.execute("PRAGMA user_version=2")
+                db.commit()
+            except BaseException:
+                db.rollback()
+                raise
         Path(path).chmod(0o600)
         self.verify_audit()
 

@@ -15,6 +15,8 @@ from .config import Settings
 from .connectors import HTTPBankAdapter
 from .crypto import strict_json
 from .store import verify_chain
+from .journal import verify_financial_state
+from .vault import new_keyring
 
 
 def configure(directory, origin, issuer, bank_url):
@@ -29,10 +31,12 @@ def configure(directory, origin, issuer, bank_url):
     path.chmod(0o700)
     private_write(path / "audit.key", audit_key)
     private_write(path / "nonce.key", nonce_key)
+    private_write(path / "vault-keys.json", json.dumps(new_keyring()))
     config = {
         "mode": "integrated", "origin": origin, "issuer": issuer,
         "audience": "scoutbankai", "database": "scout.db", "jwks_file": "bank-jwks.json",
         "audit_key_file": "audit.key", "nonce_key_file": "nonce.key",
+        "vault_keyring_file": "vault-keys.json",
         "connector": {"base_url": bank_url, "cert_file": "bank-client.crt",
                       "key_file": "bank-client.key", "token_file": "bank-token.key"},
         "supervisor": {"mode": "rules"},
@@ -47,6 +51,8 @@ def check(service):
     if service.store.rows("PRAGMA integrity_check")[0]["integrity_check"] != "ok":
         raise ValueError("database integrity check failed")
     if settings.mode == "integrated":
+        if not service.vault.active:
+            raise ValueError("integrated mode requires a vault keyring")
         keys = strict_json(Path(settings.jwks_file).read_bytes()).get("keys", [])
         seen = set()
         if not keys:
@@ -63,8 +69,15 @@ def check(service):
         bank._token()
     finally:
         bank.close()
+    with service.store.transaction() as db:
+        financial = verify_financial_state(db)
+        for table in ("accounts", "payees"):
+            for row in db.execute(f"SELECT id,tenant,bank_id FROM {table}"):
+                service.vault.open(row["bank_id"], row["tenant"], table, row["id"])
     return {"status": "local_checks_passed", "mode": settings.mode, "version": __version__,
             "audit_checkpoint": service.store.verify_audit(),
+            "reservation_journal": financial,
+            "vault": "AES-256-GCM" if service.vault.active else "not_configured",
             "payment_states": service.store.rows("SELECT status,count(*) AS count FROM payments GROUP BY status"),
             "network_contacted": False, "bank_acceptance": "requires_authorised_environment"}
 
@@ -81,12 +94,33 @@ def backup(service, directory, anchor=None):
         if target.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
             raise ValueError("backup database integrity check failed")
         checkpoint = verify_chain(target, service.settings.audit_key, anchor)
+        financial = verify_financial_state(target)
+        schema = target.execute("PRAGMA user_version").fetchone()[0]
         target.execute("PRAGMA journal_mode=DELETE")
     with database.open("rb") as file:
         checksum = hashlib.file_digest(file, "sha256").hexdigest()
-    manifest = {"version": __version__, "schema": 1, "created_at": int(time.time()),
+    manifest = {"version": __version__, "schema": schema, "created_at": int(time.time()),
                 "database": "scout.db", "sha256": checksum,
+                "reservation_journal": financial,
                 "audit_checkpoint": checkpoint, "keys_included": False,
                 "recovery": "Pause dispatch and reconcile the entire backup gap with the bank before resuming."}
     private_write(destination / "manifest.json", json.dumps(manifest, indent=2) + "\n")
     return manifest
+
+
+def reencrypt_vault(service):
+    """Host-only migration/rotation. Use a stopped installation and retained backup."""
+    if not service.vault.active:
+        raise ValueError("configure a vault keyring before migrating")
+    changed = 0
+    with service.store.transaction() as db:
+        for table in ("accounts", "payees"):
+            for row in db.execute(f"SELECT id,tenant,bank_id FROM {table}").fetchall():
+                plaintext = service.vault.open(row["bank_id"], row["tenant"], table, row["id"], migration=True)
+                ciphertext = service.vault.seal(plaintext, row["tenant"], table, row["id"])
+                db.execute(f"UPDATE {table} SET bank_id=? WHERE tenant=? AND id=?", (ciphertext, row["tenant"], row["id"]))
+                changed += 1
+        for tenant in db.execute("SELECT id FROM tenants").fetchall():
+            service.store.event(db, tenant[0], "vault_reencrypted", "host_operator", service.clock(), key_id=service.vault.active)
+    return {"records_reencrypted": changed, "active_key_id": service.vault.active,
+            "old_backups": "retain their original key versions; migrate storage separately"}

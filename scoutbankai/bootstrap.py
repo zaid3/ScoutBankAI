@@ -10,6 +10,7 @@ from .config import Settings
 from .crypto import canonical, digest, new_key, proof, public_jwk
 from .models import AccountRegistration, AgentRegistration, MandateRequest, PaymentRequest, PayeeRegistration
 from .service import Service
+from .vault import new_keyring
 
 
 def private_write(path, data):
@@ -26,8 +27,9 @@ def initialize(directory, origin="http://127.0.0.1:8090", tenant="sample-bank"):
     path.chmod(0o700)
     private_write(path / "audit.key", secrets.token_bytes(32))
     private_write(path / "nonce.key", secrets.token_bytes(32))
+    private_write(path / "vault-keys.json", json.dumps(new_keyring()))
     config = {"database": "scout.db", "audit_key_file": "audit.key", "nonce_key_file": "nonce.key",
-              "origin": origin, "mode": "development",
+              "origin": origin, "mode": "development", "vault_keyring_file": "vault-keys.json",
               "connector": {"base_url": "http://127.0.0.1:8091", "token_file": str(path / "bank-token.key")},
               "supervisor": {"mode": "rules"}}
     private_write(path / "config.json", json.dumps(config, indent=2))
@@ -54,7 +56,7 @@ def sample_authority(service, credentials, budget=100_000, limit=50_000, review=
     agent = service.register_agent(operator, AgentRegistration(name="Invoice assistant", owner=customer.subject, public_jwk=public_jwk(key)))
     account = "account_" + suffix
     payee = "supplier_" + suffix
-    service.register_account(operator, AccountRegistration(id=account, customer=customer.subject, bank_id="sample-checking", currency="GBP"))
+    service.register_account(operator, AccountRegistration(id=account, customer=customer.subject, bank_id="sample-checking-" + suffix, currency="GBP"))
     service.register_payee(operator, PayeeRegistration(id=payee, bank_id="sample-supplier", label="Sample supplier"))
     mandate = service.create_mandate(customer, MandateRequest(agent_id=agent["id"], account_id=account,
         permissions=["payments:create", "payments:read"], payees=[payee], currency="GBP",

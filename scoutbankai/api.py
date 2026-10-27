@@ -14,7 +14,8 @@ from starlette.concurrency import run_in_threadpool
 from . import __version__
 from .crypto import digest, strict_json
 from .errors import BridgeError
-from .models import AccountRegistration, AgentRegistration, MandateRequest, PauseRequest, PayeeRegistration, PaymentRequest, ReviewRequest
+from .models import AccountRegistration, AgentRegistration, ControlProposal, MandateRequest, PauseRequest, PayeeRegistration, PaymentRequest, ReviewRequest
+from .journal import verify_financial_state
 from .service import Service
 
 
@@ -191,6 +192,28 @@ def create_app(settings, service=None):
         principal(request, {"operator", "auditor"})
         return {"integrity": "verified", "checkpoint": service.store.verify_audit(),
                 "scope": "installation_chain", "truncation_protection": "retain checkpoint outside this installation"}
+
+    @app.get("/v1/controls")
+    def controls(request: Request):
+        return service.controls.overview(principal(request, {"operator", "reviewer", "auditor"}))
+
+    @app.post("/v1/control-changes", status_code=201)
+    def propose_change(request: Request, model: ControlProposal):
+        return service.controls.propose(principal(request, {"operator"}), model)
+
+    @app.post("/v1/control-changes/{change_id}/review")
+    def review_change(change_id: str, request: Request, model: ReviewRequest):
+        return service.controls.review(principal(request, {"reviewer"}), change_id, model)
+
+    @app.post("/v1/accounts/{account_id}/freeze")
+    def freeze(account_id: str, request: Request):
+        return service.controls.freeze(principal(request, {"operator"}), account_id)
+
+    @app.get("/v1/journal/verify")
+    def verify_journal(request: Request):
+        actor = principal(request, {"operator", "auditor"})
+        with service.store.transaction() as db:
+            return verify_financial_state(db, actor.tenant)
 
     def openapi():
         if app.openapi_schema:

@@ -113,11 +113,15 @@ def test_signed_consent_sdk_and_worker_over_real_https_with_mtls(tmp_path, certi
         issuer_public.update(kid="test-issuer", alg="RS256", use="sig")
         jwks = tmp_path / "issuer.json"
         jwks.write_text(json.dumps({"keys": [issuer_public]}))
+        from scoutbankai.bootstrap import private_write
+        from scoutbankai.vault import new_keyring
+        vault_file = tmp_path / "vault.json"
+        private_write(vault_file, json.dumps(new_keyring()))
         connector = {"base_url": bank_url, "ca_file": pki["ca"], "cert_file": pki["client_crt"],
                      "key_file": pki["client_key"], "token_file": str(bank_token)}
         cfg = Settings(database=str(tmp_path / "scout.db"), audit_key=secrets.token_bytes(32),
                        nonce_key=secrets.token_bytes(32), mode="integrated", origin="https://127.0.0.1",
-                       issuer="https://issuer.bank.example", jwks_file=str(jwks), connector=connector)
+                       issuer="https://issuer.bank.example", jwks_file=str(jwks), connector=connector, vault_keyring_file=str(vault_file))
         service = Service(cfg)
         with service.store.transaction() as db:
             db.execute("INSERT INTO tenants(id) VALUES('test-bank')")
@@ -127,7 +131,7 @@ def test_signed_consent_sdk_and_worker_over_real_https_with_mtls(tmp_path, certi
             def bearer(role, **extra):
                 now = int(time.time())
                 claims = {"iss": cfg.issuer, "aud": cfg.audience, "tenant": "test-bank", "sub": role + "-1",
-                          "role": role, "iat": now, "exp": now + 300, **extra}
+                          "role": role, "iat": now, "exp": now + 300, "scout_actor_type": "human", **extra}
                 return {"Authorization": "Bearer " + jwt.encode(claims, issuer_key, algorithm="RS256", headers={"kid": "test-issuer"})}
             with httpx.Client(base_url=origin, verify=ssl.create_default_context(cafile=pki["ca"]), trust_env=False) as control:
                 agent_key = new_key()
@@ -135,6 +139,14 @@ def test_signed_consent_sdk_and_worker_over_real_https_with_mtls(tmp_path, certi
                 assert registered.status_code == 201
                 assert control.post("/v1/accounts", headers=bearer("operator"), json={"id": "checking", "customer": "customer-1", "bank_id": "sample-checking", "currency": "GBP"}).status_code == 201
                 assert control.post("/v1/payees", headers=bearer("operator"), json={"id": "supplier", "bank_id": "sample-supplier", "label": "Supplier"}).status_code == 201
+                proposal = control.post("/v1/control-changes", headers=bearer("operator"), json={
+                    "action": "account_limits", "account_id": "checking", "reason": "Approved bank risk policy",
+                    "limits": {"per_payment_minor": 50000, "rolling_day_minor": 100000,
+                               "max_pending_minor": 100000, "require_review": False}})
+                assert proposal.status_code == 201
+                change = proposal.json()
+                assert control.post(f"/v1/control-changes/{change['id']}/review", headers=bearer("reviewer"),
+                    json={"decision": "approve", "request_hash": change["request_hash"]}).status_code == 200
                 policy = MandateRequest(agent_id=registered.json()["id"], account_id="checking", payees=["supplier"],
                     permissions=["payments:create", "payments:read"], currency="GBP", per_payment_minor=50000,
                     budget_minor=100000, review_above_minor=20000, expires_at=int(time.time()) + 3600).model_dump()
@@ -163,6 +175,8 @@ def test_signed_consent_sdk_and_worker_over_real_https_with_mtls(tmp_path, certi
                 assert overview.status_code == 200
                 assert overview.headers["strict-transport-security"] == "max-age=31536000"
                 assert overview.json()["mandates"][0]["budget_remaining"] == 95000
+                assert control.get("/v1/journal/verify", headers=bearer("auditor")).json()["integrity"] == "verified"
+                assert service.store.rows("SELECT bank_id FROM accounts")[0]["bank_id"].startswith("sbv1.")
         with sqlite3.connect(bank_db) as db:
             assert db.execute("SELECT count(*) FROM records").fetchone()[0] == 1
             assert db.execute("SELECT amount FROM balance").fetchone()[0] == 9995000

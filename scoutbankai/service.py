@@ -10,6 +10,9 @@ from .errors import BridgeError
 from .models import Advisory
 from .store import Store
 from .supervisor import OpenAISupervisor, RuleSupervisor
+from .controls import Controls
+from .journal import record, verify_payment
+from .vault import Vault
 
 PENDING = ("screening", "review", "queued")
 
@@ -20,6 +23,8 @@ class Service:
         self.clock = clock or (lambda: int(time.time()))
         self.store = Store(settings.database, settings.audit_key)
         self.auth = Authenticator(settings, self.store, self.clock)
+        self.controls = Controls(self)
+        self.vault = Vault(settings.vault_keyring_file, allow_plaintext=settings.mode == "development")
         cfg = settings.supervisor
         self.supervisor = supervisor or (OpenAISupervisor(cfg.get("model", ""), cfg.get("token_env", "OPENAI_API_KEY"))
                                          if cfg.get("mode") == "openai" else RuleSupervisor())
@@ -35,17 +40,23 @@ class Service:
 
     def register_account(self, principal, model):
         with self.store.transaction() as db:
+            for existing in db.execute("SELECT id,bank_id FROM accounts WHERE tenant=?", (principal.tenant,)):
+                if self.vault.open(existing["bank_id"], principal.tenant, "accounts", existing["id"]) == model.bank_id:
+                    raise BridgeError("bank_account_already_registered", 409)
+            bank_id = self.vault.seal(model.bank_id, principal.tenant, "accounts", model.id)
             try:
-                db.execute("INSERT INTO accounts VALUES(?,?,?,?,?)", (model.id, principal.tenant, model.customer, model.bank_id, model.currency))
+                db.execute("INSERT INTO accounts VALUES(?,?,?,?,?)", (model.id, principal.tenant, model.customer, bank_id, model.currency))
             except sqlite3.IntegrityError:
                 raise BridgeError("account_already_registered", 409) from None
             self.store.event(db, principal.tenant, "account_registered", principal.subject, self.clock(), account_id=model.id)
+            self.controls.account(db, principal.tenant, model.id)
         return {"id": model.id}
 
     def register_payee(self, principal, model):
         with self.store.transaction() as db:
+            bank_id = self.vault.seal(model.bank_id, principal.tenant, "payees", model.id)
             try:
-                db.execute("INSERT INTO payees VALUES(?,?,?,?)", (model.id, principal.tenant, model.bank_id, model.label))
+                db.execute("INSERT INTO payees VALUES(?,?,?,?)", (model.id, principal.tenant, bank_id, model.label))
             except sqlite3.IntegrityError:
                 raise BridgeError("payee_already_registered", 409) from None
             self.store.event(db, principal.tenant, "payee_registered", principal.subject, self.clock(), payee_id=model.id)
@@ -151,6 +162,7 @@ class Service:
                     count = db.execute("SELECT count(*) FROM payments WHERE mandate=? AND created>?", (model.mandate_id, now - 60)).fetchone()[0]
                     if count >= policy["max_payments_per_minute"]:
                         raise BridgeError("velocity_limit_exceeded", 429)
+                    account_review = self.controls.check(db, actor["tenant"], policy["account_id"], model.amount_minor)
                     changed = db.execute("UPDATE mandates SET budget_remaining=budget_remaining-? WHERE id=? AND budget_remaining>=?",
                                          (model.amount_minor, model.mandate_id, model.amount_minor)).rowcount
                     if not changed:
@@ -158,6 +170,7 @@ class Service:
                     db.execute("INSERT INTO payments(id,tenant,agent,mandate,account,payee,amount,currency,reference,idempotency,request_hash,status,reason,created,updated) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                                (payment_id, actor["tenant"], actor["agent"], model.mandate_id, policy["account_id"], model.payee_id,
                                 model.amount_minor, model.currency, model.reference, idempotency, request_hash, "screening", "supervision_pending", now, now))
+                    record(db, db.execute("SELECT * FROM payments WHERE id=?", (payment_id,)).fetchone(), "reserve", now)
                     self.store.event(db, actor["tenant"], "payment_reserved", actor["agent"], now,
                                      payment_id=payment_id, request_hash=request_hash, amount_minor=model.amount_minor)
             except BridgeError as exc:
@@ -183,9 +196,9 @@ class Service:
                 if mandate["revoked"] or mandate["expires"] <= self.clock():
                     self.cancel(db, payment, "authority_expired", "supervisor")
                 else:
-                    review = advice.require_review or model.amount_minor > policy["review_above_minor"]
+                    review = account_review or advice.require_review or model.amount_minor > policy["review_above_minor"]
                     status = "review" if review else "queued"
-                    reason = "threshold_review" if model.amount_minor > policy["review_above_minor"] else advice.reason
+                    reason = "account_review_required" if account_review else ("threshold_review" if model.amount_minor > policy["review_above_minor"] else advice.reason)
                     db.execute("UPDATE payments SET status=?,reason=?,updated=? WHERE id=?", (status, reason, self.clock(), payment_id))
                     self.store.event(db, actor["tenant"], "supervision_completed", self.supervisor.name, self.clock(),
                                      payment_id=payment_id, status=status, reason=reason)
@@ -209,6 +222,8 @@ class Service:
     def cancel(self, db, payment, reason, actor):
         if payment["status"] not in PENDING:
             return
+        verify_payment(db, payment)
+        record(db, payment, "release", self.clock())
         db.execute("UPDATE payments SET status='cancelled',reason=?,updated=? WHERE id=?", (reason, self.clock(), payment["id"]))
         db.execute("UPDATE mandates SET budget_remaining=budget_remaining+? WHERE id=?", (payment["amount"], payment["mandate"]))
         self.store.event(db, payment["tenant"], "payment_cancelled", actor, self.clock(), payment_id=payment["id"], reason=reason)
@@ -254,7 +269,10 @@ class Service:
         return {"status": "suspended"}
 
     def pause(self, principal, paused):
+        if not paused and self.settings.mode == "integrated":
+            raise BridgeError("independent_resume_approval_required", 403)
         with self.store.transaction() as db:
+            db.execute("INSERT INTO tenant_controls(tenant,version) VALUES(?,1) ON CONFLICT(tenant) DO UPDATE SET version=version+1", (principal.tenant,))
             db.execute("UPDATE tenants SET paused=? WHERE id=?", (int(paused), principal.tenant))
             self.store.event(db, principal.tenant, "bank_paused" if paused else "bank_resumed", principal.subject, self.clock())
         return {"paused": paused}

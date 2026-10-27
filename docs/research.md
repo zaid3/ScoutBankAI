@@ -1,6 +1,6 @@
 # Research and design decisions
 
-Research reviewed on 26 October 2026. These sources explain the design context. They do not endorse, certify or validate ScoutBankAI.
+Research reviewed on 27 October 2026. These sources explain the design context. They do not endorse, certify or validate ScoutBankAI. The [banking security review](banking-security-review.md) adds current news, public bank architecture and the 0.2 implementation coverage.
 
 ## What the standards establish
 

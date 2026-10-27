@@ -1,20 +1,23 @@
 # Verification results
 
-Release: `0.1.0rc1`. Verification date: 26 October 2026.
+Release: `0.2.0rc1`. Verification date: 27 October 2026.
 
 ## Executed locally
 
 | Check | Result | Scope |
 | --- | --- | --- |
-| Python test suite | 105 passed | Authentication, signed exact consent, policy, concurrency, review, recovery, connectors, backups and configuration |
+| Python test suite | 147 passed | Authentication, exact consent, shared account limits, independent control changes, expiry, journal integrity, encryption/rotation, concurrency, recovery, connectors and backups |
 | HTTPS integration | Passed | Actual loopback TCP with generated CA, verified server certificates and a separate bank HTTP service |
 | Mutual TLS boundary | Passed | Worker client certificate accepted; a caller without a client certificate rejected; an untrusted server certificate not accepted |
 | Complete payment flow | Passed | Bank-issued staff/customer JWTs, exact approval receipt, agent enrolment, SDK proof, API reservation, worker dispatch and confirmed fixture settlement |
 | Duplicate business request | Passed | Repeated signed requests returned the same operation; the separate bank recorded one payment and one debit |
-| Browser console | Passed | Real API operator pause/resume and chain verification, reviewer approval, auditor export and role-specific controls |
+| Browser console | Passed | Real API policy proposal, independent control approval, reservation verification, operator pause/resume, payment review, auditor export and role-specific controls |
 | Desktop/mobile layout | Passed | Chromium at 1440 × 1000 and 390 × 844; no horizontal overflow; screenshots inspected |
 | Browser credential handling | Passed | No token in localStorage or sessionStorage; token field cleared after connection; disconnect removes the visible records |
 | Package build and clean installation | Passed | Wheel installed in a fresh virtual environment; CLI, demo, configuration check, backup, static assets and authenticated OpenAPI verified |
+| Known-vulnerability audit | No known vulnerabilities found in 23 scanned dependency distributions | `pip-audit 2.10.1` against the local test dependency directory; no skipped distributions; advisory coverage is not proof of no vulnerabilities |
+
+The added adversarial cases cover two agents with separate mandates racing against one account cap, settled payments consuming rolling limits, old unknown payments retaining outstanding exposure, stale or self-approved control changes, issuer tokens without an explicit human assertion, duplicate bank account aliases, modified payment state, ciphertext substitution, missing keys and key rotation. Schema-1 migration preserves the existing payment and grant state and identifies reconstructed journal history.
 
 The Python suite ran on Python 3.12.14. Browser automation used Playwright 1.62.1 and Chromium 153 in the local execution environment. CI also defines Python 3.11, 3.12 and 3.13 jobs and a separate browser job. A configured CI job is not itself a passing run; consult the repository's actual Actions results for each commit.
 

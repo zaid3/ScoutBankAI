@@ -20,6 +20,8 @@ Set `mode` to `integrated`. This disables development bearer tokens. Configure a
 
 Access tokens need `iss`, `aud`, `sub`, `tenant`, `role`, `iat` and `exp`. Maximum lifetime is 900 seconds. `sub` and `tenant` are opaque identifiers using letters, numbers, underscores or hyphens. Enable each tenant through the host administration command before accepting its tokens:
 
+Operator and reviewer tokens must additionally contain `"scout_actor_type": "human"`. The bank issuer must reserve this assertion for its protected staff authentication flow. A service token, missing assertion or unsupported actor type is rejected for these roles. This is a verified issuer assertion, not biometric detection or proof that credentials were never shared.
+
 ```sh
 scoutbankai enable-tenant --config /run/scout/config.json bank-one
 ```
@@ -28,8 +30,8 @@ The bank should map an existing staff identity to exactly one role per token:
 
 | Role | API authority |
 | --- | --- |
-| `operator` | Register agents, account aliases and payees; pause; suspend; revoke; inspect evidence |
-| `reviewer` | Approve or reject a request already held for review |
+| `operator` | Register agents, account aliases and payees; pause; freeze; propose control changes; suspend; revoke; inspect evidence |
+| `reviewer` | Approve or reject payments and control changes independently |
 | `auditor` | Read the console and verify evidence |
 | `customer` | Grant a permission with an exact consent receipt; issue tokens for an existing permission; revoke own permissions |
 
@@ -59,6 +61,8 @@ Bank-side approval must bind what the customer sees to what the issuer signs. Th
 ## Register accounts and recipients
 
 The operator creates immutable aliases with `/v1/accounts` and `/v1/payees`. Account registration binds the alias to a bank customer and currency. A customer cannot grant access to an account owned by another customer. Recipient aliases map to identifiers understood by the bank gateway.
+
+New installations encrypt bank identifiers with the configured AES-256-GCM vault. Integrated writes and dispatch reject an unavailable vault or plaintext identifiers. One bank account identifier cannot be registered twice within a tenant. The institution must use a canonical bank identifier: distinct upstream strings for the same account cannot be recognised as aliases automatically. After registration, an operator proposes shared account limits and a different reviewer approves them. Requests fail closed until those limits exist.
 
 This release does not edit an existing alias in place. A changed recipient must receive a new alias and a new customer permission, preventing old authorisations from silently pointing to a different recipient.
 

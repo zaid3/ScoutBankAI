@@ -1,4 +1,6 @@
 from .connectors import BankResult
+from .errors import BridgeError
+from .journal import record, verify_payment
 
 
 class Worker:
@@ -9,7 +11,8 @@ class Worker:
         account = db.execute("SELECT bank_id FROM accounts WHERE id=? AND tenant=?", (row["account"], row["tenant"])).fetchone()
         payee = db.execute("SELECT bank_id FROM payees WHERE id=? AND tenant=?", (row["payee"], row["tenant"])).fetchone()
         return {"id": row["id"], "tenant": row["tenant"], "request_hash": row["request_hash"],
-                "debtor_account": account[0], "creditor_account": payee[0], "amount_minor": row["amount"],
+                "debtor_account": self.service.vault.open(account[0], row["tenant"], "accounts", row["account"]),
+                "creditor_account": self.service.vault.open(payee[0], row["tenant"], "payees", row["payee"]), "amount_minor": row["amount"],
                 "currency": row["currency"], "reference": row["reference"]}
 
     def dispatch_one(self):
@@ -17,10 +20,22 @@ class Worker:
         with self.store.transaction() as db:
             rows = db.execute("SELECT p.* FROM payments p JOIN tenants t ON p.tenant=t.id WHERE p.status='queued' AND t.paused=0 ORDER BY p.created,p.id LIMIT 50").fetchall()
             for row in rows:
+                verify_payment(db, row)
                 mandate = db.execute("SELECT * FROM mandates WHERE id=?", (row["mandate"],)).fetchone()
                 agent = db.execute("SELECT active FROM agents WHERE id=?", (row["agent"],)).fetchone()
                 if mandate["revoked"] or mandate["expires"] <= now or not agent[0]:
                     self.service.cancel(db, row, "authority_expired", "worker")
+                    continue
+                try:
+                    review = self.service.controls.check(db, row["tenant"], row["account"], row["amount"], dispatch=True, created=row["created"])
+                except BridgeError as exc:
+                    if exc.status not in {403, 423}:
+                        raise
+                    self.service.cancel(db, row, exc.code, "worker")
+                    continue
+                if review and not row["reviewed_by"]:
+                    db.execute("UPDATE payments SET status='review',reason='account_review_required',updated=? WHERE id=?", (now, row["id"]))
+                    self.store.event(db, row["tenant"], "dispatch_review_required", "worker", now, payment_id=row["id"])
                     continue
                 # This commit is the dispatch boundary. Later revocation cannot recall a bank request.
                 wire = self._wire(db, row)
@@ -44,10 +59,14 @@ class Worker:
             row = db.execute("SELECT * FROM payments WHERE id=?", (wire["id"],)).fetchone()
             if row["status"] not in {"dispatching", "submitted", "unknown"}:
                 return
+            verify_payment(db, row)
             if row["bank_id"] and outcome.bank_id and row["bank_id"] != outcome.bank_id:
                 status, outcome = "unknown", BankResult("unknown", row["bank_id"])
             if status == "rejected":
+                record(db, row, "release", self.service.clock())
                 db.execute("UPDATE mandates SET budget_remaining=budget_remaining+? WHERE id=?", (row["amount"], row["mandate"]))
+            if status == "settled":
+                record(db, row, "settle", self.service.clock())
             db.execute("UPDATE payments SET status=?,reason=?,bank_id=COALESCE(?,bank_id),updated=? WHERE id=?",
                        (status, "bank_" + status, outcome.bank_id, self.service.clock(), row["id"]))
             self.store.event(db, row["tenant"], "bank_status_recorded", "worker", self.service.clock(), payment_id=row["id"], status=status, bank_id=outcome.bank_id)

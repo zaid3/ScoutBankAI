@@ -15,6 +15,7 @@ class Settings:
     issuer: str = ""
     audience: str = "scoutbankai"
     jwks_file: str = ""
+    vault_keyring_file: str = ""
     connector: dict = field(default_factory=dict)
     supervisor: dict = field(default_factory=lambda: {"mode": "rules"})
 
@@ -48,6 +49,8 @@ class Settings:
         raw.update({name: file.read_bytes() for name, file in secrets.items()})
         if raw.get("jwks_file"):
             raw["jwks_file"] = resolve(raw["jwks_file"])
+        if raw.get("vault_keyring_file"):
+            raw["vault_keyring_file"] = resolve(raw["vault_keyring_file"])
         for name in ("ca_file", "cert_file", "key_file", "token_file"):
             if raw.get("connector", {}).get(name):
                 raw["connector"][name] = resolve(raw["connector"][name])

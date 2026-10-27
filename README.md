@@ -8,7 +8,7 @@ Created and maintained by **A Haque (zaid)**. [GitHub profile](https://github.co
 
 ## Release status
 
-**0.1.0rc1 is an installable release candidate.** The API, agent client, operator console, durable payment state machine, consent checks, HTTP bank connector and optional model reviewer are implemented. The verified suite contains 105 passing Python tests, including a real HTTPS and mutual TLS integration test. Browser checks cover operator controls, reviewer approval, auditor export and desktop/mobile layout. See [verification results](docs/verification.md) for the exact scope.
+**0.2.0rc1 is an installable release candidate.** The API, agent client, operator console, durable payment state machine, consent checks, HTTP bank connector and optional model reviewer are implemented. This release adds shared account limits, independent approval of control changes, account isolation, an append-only reservation journal and encrypted bank identifiers. The verified suite contains 147 passing Python tests, including a real HTTPS and mutual TLS integration test. Browser checks cover control proposals, independent approvals, reservation verification, payment review, auditor export and desktop/mobile layout. See [verification results](docs/verification.md) for the exact scope.
 
 Live bank acceptance has not been completed. The included development bank uses simulated money. The integrated connector makes actual HTTPS requests to an operator-configured bank gateway; that gateway must implement the documented contract and connect to the institution's authorised systems. This release is not FAPI-certified, a regulated bank, a replacement core ledger, or a universal connector to every bank.
 
@@ -26,6 +26,10 @@ ScoutBankAI gives an agent a separate identity and a bounded permission. Its int
 | A valid login is mistaken for permission to move money | A signed bank receipt binds the customer's approval to an exact account, recipient list, budget and expiry | The bank can check the scope of permission for every proposed action |
 | An agent changes an amount or recipient while pursuing a task | The request body is signed and checked against the stored permission | Altered requests and actions outside the permission are rejected |
 | Simultaneous agent requests exceed a spending budget | Budget checks and reservations occur in one database transaction | Parallel requests cannot spend the same remaining delegated budget |
+| Multiple agents split spending across different permissions on the same account | Shared per-payment, rolling 24-hour, outstanding and rate limits | Separate grants cannot bypass that account's approved limits |
+| One compromised administrator raises limits or resumes a paused bank | A proposal bound to its exact contents, an independent reviewer and a current configuration version | Sensitive changes require two distinct bank-attested human identities |
+| A delayed instruction executes after conditions change | The worker rechecks current limits, account freezes and request age at dispatch | Stale or newly disallowed work is stopped before contacting the bank |
+| Reservation records drift from payment outcomes | A balanced append-only reservation journal, startup verification and dispatch checks | State corruption can be detected before a bank request is sent |
 | A timeout leaves the bank unsure whether a transfer succeeded | A durable payment record retains an unresolved state and uses authoritative status lookup | The worker avoids creating another transfer merely because a response was lost |
 | A model approves its own mistake | Hard controls run separately; sensitive requests need an independent reviewer identity | A model's output cannot expand authority or directly execute a payment |
 | A customer withdraws consent or an agent is compromised | Permission revocation, agent suspension and a bank pause control | Undispatched work can be stopped while existing bank operations are reconciled |
@@ -56,6 +60,11 @@ For banks, the intended value is a controlled route for authorised agents to use
 | Customer consent | Bank-signed, recent, single-use receipts bound to the exact permission in integrated mode |
 | Payment permissions | Explicit account, recipient list, currency, per-payment limit, total budget, expiry and submission rate |
 | Concurrent requests | Atomic budget reservations and persistent idempotency records in SQLite |
+| Shared account limits | Approved limits span every agent and grant for the account; integrated mode denies requests until limits exist |
+| Control approvals | Exact proposal hash, two distinct staff identities, 15-minute expiry and configuration version checks |
+| Account isolation | Immediate freeze stops new work and cancels undispatched requests; reopening requires independent approval |
+| Reservation journal | Balanced reserve, release and settlement entries; payment and budget consistency verification |
+| Bank identifier encryption | AES-256-GCM with record-bound authentication, versioned keys and an explicit rotation command |
 | Independent review | A separate reviewer role approves the exact stored request hash; it cannot expand the permission |
 | AI supervision | Optional structured model assessment can require review; deterministic controls remain authoritative |
 | Revocation | Customer permission revocation and operator agent suspension cancel undispatched work |
@@ -124,7 +133,7 @@ Follow [the integration guide](docs/bank-integration.md) and [the bank adapter c
 
 1. Configure the bank's issuer, audience and public signing keys. Map its approved staff and customer identities to ScoutBankAI roles and a bank tenant.
 2. Connect the bank's customer approval flow to signed consent receipts. The receipt must bind the exact requested policy.
-3. Register approved account and payee aliases. Keep the bank's own account identifiers behind the worker boundary.
+3. Register approved account and payee aliases, configure the vault keyring, and obtain independent approval for account limits. Staff tokens must include the bank's `scout_actor_type: human` assertion. Keep the bank's own account identifiers behind the worker boundary.
 4. Map the bank's existing payment API to the adapter contract, including stable idempotency and authoritative status lookup.
 5. Configure HTTPS, client certificates, bank access credentials, secrets storage, monitoring and backups. Run the integration acceptance checks against the bank's authorised test environment.
 
@@ -172,6 +181,8 @@ An unavailable provider, refusal or malformed result requires independent review
 
 ## Operational boundaries
 
+The [banking security review](docs/banking-security-review.md) maps current reported risks and public bank architecture to implemented controls. The [account security guide](docs/account-security.md) explains the new API, role boundaries, monetary journal and key rotation. Existing installations must follow the [0.2 upgrade procedure](docs/operations.md#upgrading-from-01).
+
 The database is a single-installation SQLite store with transactional writes. This release does not provide distributed high availability, automated disaster recovery or a guaranteed service level. Deploy the API and worker on the same trusted host/storage boundary. Do not share a SQLite database over a network filesystem.
 
 ScoutBankAI controls requests routed through it. It cannot identify every hidden agent using a customer's browser session or protect bank endpoints that bypass it. The bank's own fraud checks, sanctions screening, customer verification, available-funds checks and payment authorisation still apply.
@@ -188,6 +199,8 @@ A completed transfer is not automatically reversible. Revocation can stop undisp
 * [Research, standards and coverage](docs/research.md)
 * [Deployment and recovery](docs/operations.md)
 * [Verification results](docs/verification.md)
+* [Banking security research and coverage](docs/banking-security-review.md)
+* [Account controls, approvals and encryption](docs/account-security.md)
 
 ## Licence
 

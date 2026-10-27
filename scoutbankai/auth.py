@@ -20,6 +20,7 @@ class Principal:
     consent_hash: str | None = None
     consent_time: int | None = None
     consent_id: str | None = None
+    actor_type: str = "human"
 
 
 class Authenticator:
@@ -61,6 +62,11 @@ class Authenticator:
                     raise ValueError()
                 if not isinstance(claims["role"], str) or claims["role"] not in ROLES:
                     raise ValueError()
+                actor_type = claims.get("scout_actor_type", "unknown")
+                if not isinstance(actor_type, str) or actor_type not in {"human", "service", "unknown"}:
+                    raise ValueError()
+                if claims["role"] in {"operator", "reviewer"} and actor_type != "human":
+                    raise ValueError()
                 receipt = claims.get("scout_action") == "grant_mandate"
                 if receipt and (not isinstance(claims.get("scout_policy_sha256"), str)
                                 or not re.fullmatch(r"[0-9a-f]{64}", claims["scout_policy_sha256"])
@@ -70,7 +76,7 @@ class Authenticator:
                     raise ValueError()
                 principal = Principal(claims["tenant"], claims["sub"], claims["role"],
                                       claims["scout_policy_sha256"] if receipt else None,
-                                      claims["auth_time"] if receipt else None, claims["jti"] if receipt else None)
+                                      claims["auth_time"] if receipt else None, claims["jti"] if receipt else None, actor_type)
             except (OSError, ValueError, KeyError, TypeError, AttributeError, jwt.PyJWTError):
                 raise BridgeError("unauthenticated", 401) from None
         if principal.role not in roles:

@@ -13,4 +13,6 @@ coverage.xml
 node_modules/
 .ui-artifacts/
 .state-*/
+vault-keys.json
+credentials.json
 

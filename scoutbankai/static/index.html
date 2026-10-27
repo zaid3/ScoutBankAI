@@ -17,9 +17,22 @@
   <section id="workspace" hidden>
     <div class="toolbar"><div><span id="mode" class="pill"></span><span id="updated" class="muted"></span></div><div class="actions"><button id="refresh" class="secondary">Refresh</button><button id="pause" class="secondary" hidden>Pause new dispatches</button><button id="disconnect" class="quiet">Disconnect</button></div></div>
     <div class="metrics"><article class="metric"><p>Registered agents</p><strong id="agent-count">0</strong><span id="agent-detail">In this view</span></article><article class="metric"><p>Awaiting review</p><strong id="review-count">0</strong><span>Independent decision required</span></article><article class="metric"><p>Awaiting bank outcome</p><strong id="pending-count">0</strong><span>Reservations remain in place</span></article><article class="metric"><p>Settled payments</p><strong id="settled-count">0</strong><span>Bank-confirmed outcomes in this view</span></article></div>
-    <nav class="tabs" aria-label="Console sections"><a href="#payments">Payments</a><a href="#agents">Agents & permissions</a><a href="#audit">Audit trail</a></nav>
+    <nav class="tabs" aria-label="Console sections"><a href="#payments">Payments</a><a href="#agents">Agents & permissions</a><a href="#controls">Account controls</a><a href="#audit">Audit trail</a></nav>
     <section id="payments" class="panel"><div class="section-title"><div><p class="eyebrow">EXECUTION CONTROL</p><h2>Payment decisions</h2></div><span class="muted">Latest 200 requests</span></div><div id="payment-list" class="payment-list"></div></section>
     <div class="columns"><section id="agents" class="panel"><div class="section-title"><div><p class="eyebrow">VERIFIED KEYS</p><h2>Registered agents</h2></div></div><div id="agent-list"></div></section><section class="panel"><div class="section-title"><div><p class="eyebrow">CUSTOMER AUTHORITY</p><h2>Delegated permissions</h2></div></div><div id="mandate-list"></div></section></div>
+    <section id="controls" class="panel"><div class="section-title"><div><p class="eyebrow">SHARED ACCOUNT PROTECTION</p><h2>Account controls</h2></div><button id="verify-journal" class="secondary">Verify reservations</button></div><p class="muted">Limits apply across all agents and permissions for an account. Sensitive changes need a separate reviewer. Latest 200 accounts and 100 changes.</p><div id="account-controls"></div>
+      <details id="limits-editor" hidden><summary>Propose account limits</summary><form id="limits-form" class="control-form">
+        <div><label for="limit-account">Account</label><select id="limit-account" required></select></div>
+        <div><label for="limit-payment">Per payment (pence or cents)</label><input id="limit-payment" type="number" min="1" max="1000000000000" step="1" required></div>
+        <div><label for="limit-day">Rolling 24 hours (pence or cents)</label><input id="limit-day" type="number" min="1" max="1000000000000" step="1" required></div>
+        <div><label for="limit-pending">Outstanding total (pence or cents)</label><input id="limit-pending" type="number" min="1" max="1000000000000" step="1" required></div>
+        <div><label for="limit-rate">Requests per minute</label><input id="limit-rate" type="number" min="1" max="1000" step="1" value="10" required></div>
+        <div><label for="limit-age">Dispatch within (seconds)</label><input id="limit-age" type="number" min="30" max="3600" step="1" value="900" required></div>
+        <div class="full"><label class="checkbox-label" for="limit-review"><input id="limit-review" type="checkbox" checked> Require independent review for every payment</label></div>
+        <div class="full"><label for="limit-reason">Reason for this change</label><input id="limit-reason" minlength="5" maxlength="240" required autocomplete="off"></div>
+        <p id="limit-feedback" class="full" role="status" aria-live="polite"></p><button type="submit">Submit for independent approval</button>
+      </form></details><h3>Control change history</h3><div id="control-changes"></div>
+    </section>
     <section id="audit" class="panel"><div class="section-title"><div><p class="eyebrow">DECISION EVIDENCE</p><h2>Audit trail</h2></div><div class="actions"><button id="verify" class="secondary">Verify chain</button><button id="export" class="secondary">Export visible events</button></div></div><p class="muted">Latest 100 events. Keep exported checkpoints outside this installation to detect history truncation.</p><ol id="audit-list" class="timeline"></ol></section>
     <p class="footer-note">Revocation stops new work and cancels requests that have not been dispatched. Payments already sent to a bank require reconciliation.</p>
   </section>

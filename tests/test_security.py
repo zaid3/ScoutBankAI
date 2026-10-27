@@ -90,7 +90,7 @@ def integrated_auth(env, tmp_path):
                    connector={"base_url": "https://gateway.bank.example"}).validate()
     auth = Authenticator(cfg, env["service"].store, lambda: int(time.time()))
     now = int(time.time())
-    claims = {"iss": cfg.issuer, "aud": cfg.audience, "sub": "staff-1", "role": "operator", "tenant": "sample-bank", "iat": now, "exp": now + 600}
+    claims = {"iss": cfg.issuer, "aud": cfg.audience, "sub": "staff-1", "role": "operator", "tenant": "sample-bank", "iat": now, "exp": now + 600, "scout_actor_type": "human"}
     return auth, private, claims
 
 

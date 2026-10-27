@@ -71,3 +71,34 @@ class Advisory(StrictModel):
     require_review: bool
     reason: Literal["routine", "unusual_pattern", "insufficient_context", "provider_unavailable"]
 
+
+class AccountLimits(StrictModel):
+    per_payment_minor: Money
+    rolling_day_minor: Money
+    max_pending_minor: Money
+    max_payments_per_minute: Annotated[int, Field(strict=True, ge=1, le=1000)] = 10
+    max_request_age_seconds: Annotated[int, Field(strict=True, ge=30, le=3600)] = 900
+    require_review: bool = True
+
+    @model_validator(mode="after")
+    def consistent(self):
+        if self.per_payment_minor > min(self.rolling_day_minor, self.max_pending_minor):
+            raise ValueError("per-payment limit cannot exceed the aggregate limits")
+        return self
+
+
+class ControlProposal(StrictModel):
+    action: Literal["account_limits", "resume_bank", "unfreeze_account"]
+    account_id: Identifier | None = None
+    limits: AccountLimits | None = None
+    reason: Annotated[str, Field(min_length=5, max_length=240)]
+
+    @model_validator(mode="after")
+    def correct_target(self):
+        if self.action == "resume_bank":
+            if self.account_id is not None or self.limits is not None:
+                raise ValueError("resume applies only to the tenant")
+        elif self.account_id is None or ((self.action == "account_limits") != (self.limits is not None)):
+            raise ValueError("account and limits must match the requested action")
+        return self
+

@@ -18,6 +18,11 @@ The bank issuer, approved gateway, host operating system, local database access,
 | Agent expands its authority | Strict policy, bank-signed exact consent receipt, independent execution code | Secure bank approval channel |
 | Model manipulation or failure | No bank tools; hard limits; invalid results require review | Evaluate the selected model's usefulness and false alarms |
 | Concurrent overspending | Atomic reservation and stored business idempotency | Bank applies its own funds and aggregate controls |
+| Multiple grants bypass an account cap | Atomic limits aggregate all agents and grants on the registered account | Canonical upstream account identity and bank-wide limits |
+| Compromised operator changes security controls | Exact proposal, independent human-attested reviewer, expiry and version checks | Secure issuer, genuine separation of staff duties and no collusion |
+| Stale or changed instructions | Current account controls and maximum request age checked at dispatch | Business intent and the bank's own authorisation remain authoritative |
+| Reservation state corruption | Append-only balanced journal, startup and pre-dispatch verification | Host administrator and database access remain trusted |
+| Database copy exposes bank identifiers | AES-256-GCM, a separate versioned keyring and record-bound associated data | Protect keys, process memory, backups and host storage |
 | Cross-customer or cross-tenant access | Ownership and tenant checks on the API | Correct issuer-to-role mapping |
 | Insider self-approval | Separate reviewer role and actor checks | Bank identity governance and independent staff |
 | Lost bank response | Durable uncertainty and status lookup, no blind retries | Authoritative bank journal and reconciliation process |
@@ -30,7 +35,9 @@ The bank issuer, approved gateway, host operating system, local database access,
 
 This release does not identify every undeclared AI session, replace KYC/AML/sanctions controls, certify regulatory compliance, guarantee fraud prevention, perform credit decisions, move money without the bank's authorisation, reverse settled payments or secure systems outside the integrated path.
 
-Local database files are not encrypted by this package. Use appropriate encrypted storage and managed key storage. Keys and customer access tokens must not appear in source control, model prompts, public demos or issue reports. The integrated API does not accept development tokens, and the development server refuses a public bind address.
+The vault encrypts the `bank_id` fields in accounts and payees. It does not encrypt the complete SQLite database: amounts, references, aliases, policies and audit metadata remain readable to someone with database access. Use encrypted storage for the database, WAL, temporary files and backups. The built-in key provider reads an owner-only file; it is not HSM/KMS integration. Host compromise can expose process memory and keys. Keys and tokens must not appear in source control, prompts, demos or issue reports. The integrated API does not accept development tokens, and the development server refuses a public bind address.
+
+Human assertions come from the trusted issuer, not from an agent's self-description. Two identities do not prove two independent people if the institution shares credentials or assigns multiple identities to the same operator. A malicious issuer, colluding authorised reviewers, compromised host or bypass route remains outside these controls' protection.
 
 The SQLite deployment is for one trusted installation. Distributed availability, infrastructure penetration testing, bank-specific threat modelling, operational recovery exercises and independent security review are deployment acceptance work, not inferred from passing unit tests.
 
